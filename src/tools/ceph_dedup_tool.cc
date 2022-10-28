@@ -152,11 +152,11 @@ po::options_description make_usage() {
      ": fix mismatched references")
     ("op dump-chunk-refs --chunk-pool <POOL> --object <OID>",
      ": dump chunk object's references")
-    ("op chunk-dedup --pool <POOL> --object <OID> --chunk-pool <POOL> --fingerprint-algorithm <FP> --source-off <OFFSET> --source-length <LENGTH>",
+    ("op chunk-dedup --pool <POOL> --object <OID> --chunk-pool <POOL> --fingerprint-algorithm <FP_ALGO> --source-off <OFFSET> --source-length <LENGTH>",
      ": perform a chunk dedup---deduplicate only a chunk, which is a part of object.")
-    ("op object-dedup --pool <POOL> --object <OID> --chunk-pool <POOL> --fingerprint-algorithm <FP> --dedup-cdc-chunk-size <CHUNK_SIZE> [--snap]",
+    ("op object-dedup --pool <POOL> --object <OID> --chunk-pool <POOL> --fingerprint-algorithm <FP_ALGO> --dedup-cdc-chunk-size <CHUNK_SIZE> [--snap]",
      ": perform a object dedup---deduplicate the entire object, not a chunk. Related snapshots are also deduplicated if --snap is given")
-    ("op sample-dedup --pool <POOL> --chunk-pool <POOL> --chunk-algorithm <ALGO> --fingerprint-algorithm <FP> --daemon --loop",
+    ("op sample-dedup --pool <POOL> --chunk-pool <POOL> --chunk-algorithm <ALGO> --fingerprint-algorithm <FP_ALGO> --daemon --loop",
      ": perform a sample dedup---make crawling threads which crawl objects in base pool and deduplicate them based on their deduplication efficiency")
     ;
   po::options_description op_desc("Opational arguments");
