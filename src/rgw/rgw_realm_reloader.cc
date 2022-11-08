@@ -125,6 +125,7 @@ void RGWRealmReloader::reload()
           cct->_conf->rgw_run_sync_thread,
           cct->_conf.get_val<bool>("rgw_dynamic_resharding"),
           true, null_yield, // run notification thread
+          false,
           cct->_conf->rgw_cache_enabled);
     }
 
