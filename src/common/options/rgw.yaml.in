@@ -3838,4 +3838,11 @@ options:
   flags:
   - startup
   with_legacy: true
-
+- name: rgw_enable_dedup_threads
+  type: bool
+  level: advanced
+  desc: Enable RGW deduplication
+  default: false
+  services:
+  - rgw
+  with_legacy: true
