@@ -58,6 +58,7 @@ struct RGWZoneGroup;
 struct RGWZoneParams;
 class RGWReshard;
 class RGWReshardWait;
+class RGWDedup;
 
 struct get_obj_data;
 
@@ -369,12 +370,14 @@ class RGWRados
   RGWGC* gc{nullptr};
   RGWLC* lc{nullptr};
   RGWObjectExpirer* obj_expirer{nullptr};
+  std::shared_ptr<RGWDedup> dedup;
   bool use_gc_thread{false};
   bool use_lc_thread{false};
   bool quota_threads{false};
   bool run_sync_thread{false};
   bool run_reshard_thread{false};
   bool run_notification_thread{false};
+  bool use_dedup;
 
   RGWMetaNotifier* meta_notifier{nullptr};
   RGWDataNotifier* data_notifier{nullptr};
@@ -520,6 +523,11 @@ public:
   
   RGWRados& set_run_notification_thread(bool _run_notification_thread) {
     run_notification_thread = _run_notification_thread;
+    return *this;
+  }
+
+  RGWRados& set_use_dedup(bool _use_dedup) {
+    use_dedup = _use_dedup;
     return *this;
   }
 

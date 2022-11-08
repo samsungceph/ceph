@@ -65,6 +65,7 @@
 
 #include "rgw_gc.h"
 #include "rgw_lc.h"
+#include "rgw_dedup.h"
 
 #include "rgw_object_expirer_core.h"
 #include "rgw_sync.h"
@@ -1070,6 +1071,13 @@ void RGWRados::finalize()
   if (run_notification_thread) {
     rgw::notify::shutdown();
   }
+
+  if (use_dedup) {
+    if (dedup.get()) {
+      dedup->finalize();
+      dedup.reset();
+    }
+  }
 }
 
 /** 
@@ -1195,6 +1203,17 @@ int RGWRados::init_complete(const DoutPrefixProvider *dpp, optional_yield y)
   if (use_gc_thread && use_gc) {
     gc->start_processor();
     obj_expirer->start_processor();
+  }
+
+  if (use_dedup) {
+    dedup = std::make_shared<RGWDedup>();
+    if (dedup->initialize(cct, this->driver) < 0) {
+      ldpp_dout(dpp, 0) << "initialing RGWDedup failed" << dendl;
+    } else {
+      dedup->start_dedup_manager();
+    }
+  } else {
+    ldpp_dout(dpp, 5) << "note: RGWDedup not initialized" << dendl;
   }
 
   auto& current_period = svc.zone->get_current_period();
