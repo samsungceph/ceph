@@ -173,7 +173,9 @@ set(librgw_common_srcs
   rgw_lua_data_filter.cc
   rgw_bucket_encryption.cc
   rgw_tracer.cc
-  rgw_lua_background.cc)
+  rgw_lua_background.cc
+  rgw_dedup.cc
+  rgw_dedup_manager.cc)
 
 list(APPEND librgw_common_srcs
   store/immutable_config/store.cc

@@ -3692,3 +3692,11 @@ options:
   default: tank
   services:
   - rgw
+- name: rgw_enable_dedup_threads
+  type: bool
+  level: advanced
+  desc: Use dedup function in rados gateway
+  default: true
+  services:
+  - rgw
+  with_legacy: true
