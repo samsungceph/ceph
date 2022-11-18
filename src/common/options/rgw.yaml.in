@@ -3846,3 +3846,58 @@ options:
   services:
   - rgw
   with_legacy: true
+- name: rgw_dedup_num_workers
+  type: uint
+  level: advanced
+  desc: Number of workers for deduplication
+  default: 3
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_dedup_chunk_algo
+  type: str
+  level: advanced
+  desc: Chunking Algorithm for deduplication
+  default: fastcdc
+  services:
+  - rgw
+  enum_values:
+  - fastcdc
+  - fixed
+  with_legacy: true
+- name: rgw_dedup_chunk_size
+  type: uint
+  level: advanced
+  desc: Chunk size for deduplication
+  default: 16384
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_dedup_fp_algo
+  type: str
+  level: advanced
+  desc: Fingerprint Algorithm for deduplication
+  default: sha1
+  services:
+  - rgw
+  enum_values:
+  - sha1
+  - sha256
+  - sha512
+  with_legacy: true
+- name: rgw_dedup_threshold
+  type: uint
+  level: advanced
+  desc: Chunk count threshold for deduplication
+  default: 3
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_dedup_scrub_ratio
+  type: uint
+  level: advanced
+  desc: Scrub ratio for deduplication
+  default: 10
+  services:
+  - rgw
+  with_legacy: true

@@ -8,12 +8,15 @@
 using namespace std;
 
 
-void RGWDedup::initialize(CephContext* _cct, rgw::sal::RadosStore* _store)
+int RGWDedup::initialize(CephContext* _cct, rgw::sal::RadosStore* _store)
 {
   cct = _cct;
   store = _store;
   dedup_manager = make_unique<RGWDedupManager>(this, cct, store);
-  dedup_manager->initialize();
+  if (dedup_manager->initialize() < 0) {
+    return -1;
+  }
+  return 0;
 }
 
 void RGWDedup::finalize()

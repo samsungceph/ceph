@@ -1207,8 +1207,11 @@ int RGWRados::init_complete(const DoutPrefixProvider *dpp, optional_yield y)
 
   if (use_dedup) {
     dedup = std::make_shared<RGWDedup>();
-    dedup->initialize(cct, this->driver);
-    dedup->start_dedup_manager();
+    if (dedup->initialize(cct, this->driver) < 0) {
+      ldpp_dout(dpp, 0) << "initialing RGWDedup failed" << dendl;
+    } else {
+      dedup->start_dedup_manager();
+    }
   } else {
     ldpp_dout(dpp, 5) << "note: RGWDedup not initialized" << dendl;
   }
