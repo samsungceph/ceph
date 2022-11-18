@@ -175,7 +175,8 @@ set(librgw_common_srcs
   rgw_tracer.cc
   rgw_lua_background.cc
   rgw_dedup.cc
-  rgw_dedup_manager.cc)
+  rgw_dedup_manager.cc
+  rgw_dedup_worker.cc)
 
 list(APPEND librgw_common_srcs
   store/immutable_config/store.cc
