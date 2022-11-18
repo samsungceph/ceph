@@ -64,6 +64,7 @@
 
 #include "rgw_gc.h"
 #include "rgw_lc.h"
+#include "rgw_dedup.h"
 
 #include "rgw_object_expirer_core.h"
 #include "rgw_sync.h"

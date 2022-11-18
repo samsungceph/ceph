@@ -1,14 +1,13 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab ft=cpp
 
-#ifndef CEPH_RGW_DEDUP_PROC_H
-#define CEPH_RGW_DEDUP_PROC_H
+#ifndef CEPH_RGW_DEDUP_MANAGER_H
+#define CEPH_RGW_DEDUP_MANAGER_H
 
 #include "include/types.h"
 #include "common/Cond.h"
 #include "common/Thread.h"
-#include "rgw_sal.h"
-
+#include "rgw_sal_rados.h"
 
 using namespace std;
 
@@ -16,13 +15,14 @@ class RGWDedupManager : public Thread
 {
   const DoutPrefixProvider* dpp;
   CephContext* cct;
-  rgw::sal::Store* store;
+  rgw::sal::RadosStore* store;
   bool down_flag;
+  vector<string> rados_objs;
 
 public:
   RGWDedupManager(const DoutPrefixProvider* _dpp,
                  CephContext* _cct,
-                 rgw::sal::Store* _store)
+                 rgw::sal::RadosStore* _store)
     : dpp(_dpp), cct(_cct), store(_store), down_flag(true) {}
   ~RGWDedupManager() {}
   void* entry() override;
@@ -33,6 +33,7 @@ public:
 
   void set_down_flag(bool new_flag) { down_flag = new_flag; }
   bool get_down_flag() { return down_flag; }
+  int get_rados_objects();
 };
 
 #endif

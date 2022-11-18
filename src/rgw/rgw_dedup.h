@@ -12,24 +12,21 @@
 #include "include/types.h"
 #include "common/Cond.h"
 #include "common/Thread.h"
-#include "rgw_sal.h"
 #include "rgw_dedup_manager.h"
 
-
 using namespace std;
-
 
 class RGWDedup : public DoutPrefixProvider
 {
   CephContext* cct;
-  rgw::sal::Store* store;
+  rgw::sal::RadosStore* store;
   unique_ptr<RGWDedupManager> dedup_manager;
 
 public:
   RGWDedup() : cct(nullptr), store(nullptr) {}
   ~RGWDedup() override;
 
-  void initialize(CephContext* _cct, rgw::sal::Store* _store);
+  void initialize(CephContext* _cct, rgw::sal::RadosStore* _store);
   void finalize();
 
   void start_dedup_manager();

@@ -8,7 +8,7 @@
 using namespace std;
 
 
-void RGWDedup::initialize(CephContext* _cct, rgw::sal::Store* _store)
+void RGWDedup::initialize(CephContext* _cct, rgw::sal::RadosStore* _store)
 {
   cct = _cct;
   store = _store;

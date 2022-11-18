@@ -39,7 +39,6 @@
 #include "common/ceph_mutex.h"
 #include "rgw_cache.h"
 #include "rgw_sal_fwd.h"
-#include "rgw_dedup.h"
 
 struct D3nDataCache;
 
@@ -58,6 +57,8 @@ struct RGWZoneGroup;
 struct RGWZoneParams;
 class RGWReshard;
 class RGWReshardWait;
+class RGWDedup;
+class RGWDedupManager;
 
 struct get_obj_data;
 
@@ -343,7 +344,7 @@ class RGWRados
   friend class rgw::sal::MPRadosSerializer;
   friend class rgw::sal::LCRadosSerializer;
   friend class rgw::sal::RadosStore;
-
+  
   /** Open the pool used as root for this gateway */
   int open_root_pool_ctx(const DoutPrefixProvider *dpp);
   int open_gc_pool_ctx(const DoutPrefixProvider *dpp);
