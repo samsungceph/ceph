@@ -8,8 +8,11 @@
 
 #define dout_subsys ceph_subsys_rgw
 
+const int DEFAULT_NUM_WORKERS = 3;
+const int DEFAULT_SAMPLING_RATIO = 50;
 const int MAX_OBJ_SCAN_SIZE = 100;
 const int MAX_BUCKET_SCAN_SIZE = 100;
+const int DEFAULT_DEDUP_SCRUB_RATIO = 10;
 const string DEFAULT_CHUNK_POOL_POSTFIX = "_chunk";
 const string DEFAULT_COLD_POOL_POSTFIX = "_cold";
 const string DEFAULT_CHUNK_SIZE = "16384";
@@ -19,7 +22,59 @@ const string DEFAULT_HITSET_TYPE = "bloom";
 
 void RGWDedupManager::initialize()
 {
-  // TODO: initialize member variables of RGWDedupManager
+  for (int i = 0; i < num_workers; i++) {
+    auto worker = make_unique<RGWDedupWorker>(dpp, cct, store, i);
+    workers.emplace_back(move(worker));
+  }
+}
+
+void RGWDedupManager::reset_workers(bool need_scrub)
+{
+  for (int i = 0; i < num_workers; i++) {
+    if (need_scrub) {
+      workers[i].reset(new RGWChunkScrubWorker(dpp, cct, store, i, num_workers));
+    }
+    workers[i].reset(new RGWDedupWorker(dpp, cct, store, i));
+  }
+}
+
+vector<size_t> RGWDedupManager::sample_rados_objects()
+{
+  size_t num_objs = get_num_rados_obj();
+  vector<size_t> sampled_indexes(num_objs);
+  // fill out vector to get sampled indexes
+  for (size_t i = 0; i < num_objs; i++) {
+    sampled_indexes[i] = i;
+  }
+
+  unsigned seed = chrono::system_clock::now().time_since_epoch().count();
+  shuffle(sampled_indexes.begin(), sampled_indexes.end(), default_random_engine(seed));
+  size_t sampling_count = num_objs * sampling_ratio / 100;
+  sampled_indexes.resize(sampling_count);
+
+  return sampled_indexes;
+}
+
+void RGWDedupManager::hand_out_objects(vector<size_t> sampled_indexes)
+{
+  size_t num_objs_per_worker = sampled_indexes.size() / num_workers;
+  int remain_objs = sampled_indexes.size() % num_workers;
+  for (auto& worker: workers) {
+    worker->clear_objs();
+  }
+
+  vector<unique_ptr<Worker>>::iterator it = workers.begin();
+  for (auto idx : sampled_indexes) {
+    (*it)->append_obj(rados_objs[idx]);
+    if ((*it)->get_num_objs() >= num_objs_per_worker) {
+      // append remain object for even distribution if remain_objs exists
+      if (remain_objs > 0) {
+        --remain_objs;
+        continue;
+      }
+      ++it;
+    }
+  }
 }
 
 void* RGWDedupManager::entry()
@@ -28,14 +83,47 @@ void* RGWDedupManager::entry()
 
   while (!get_down_flag()) {
     int ret = 0;
-    assert(prepare_dedup_work() >= 0);
-    if (ret == 0) {
-      ldpp_dout(dpp, 2) << "not a single rados object has been found. do retry" << dendl;
-      sleep(3);
-      continue;
+    if (dedup_worked_cnt < dedup_scrub_ratio) {
+      ldpp_dout(dpp, 2) << "RGWDedupWorkers start" << dendl;
+
+      assert(prepare_dedup_work() >= 0);
+      if (ret == 0 && get_num_rados_obj() == 0) {
+        ldpp_dout(dpp, 2) << "not a single rados object has been found. do retry" << dendl;
+        sleep(60);
+        continue;
+      }
+
+      vector<size_t> sampled_indexes = sample_rados_objects();
+      hand_out_objects(sampled_indexes);
+      ++dedup_worked_cnt;
+    }
+    else {
+      ldpp_dout(dpp, 2) << "RGWChunkScrubWorkers start" << dendl;
+
+      reset_workers(dedup_worked_cnt == dedup_scrub_ratio);
+      for (auto& worker : workers) {
+        worker->initialize();
+      }
+    }   
+
+    // trigger RGWDedupWorkers
+    for (auto& worker : workers)
+    {
+      worker->set_run(true);
+      string name = worker->get_id();
+      worker->create(name.c_str());
     }
 
-    // TODO: do dedup work
+    // all RGWDedupWorkers synchronozed here
+    for (auto& w: workers)
+    {
+      w->join();
+    }
+
+    if (dedup_worked_cnt == dedup_scrub_ratio) {
+      dedup_worked_cnt = 0;
+      reset_workers(dedup_worked_cnt == dedup_scrub_ratio);
+    }
     
     sleep(3);
   }
@@ -52,7 +140,10 @@ void RGWDedupManager::stop()
 
 void RGWDedupManager::finalize()
 {
-  // TODO: finalize member variables of RGWDedupManager
+  for (auto& worker : workers) {
+    worker.reset();
+  }
+  workers.clear();
 }
 
 librados::IoCtx RGWDedupManager::get_or_create_ioctx(rgw_pool pool)
@@ -244,4 +335,13 @@ int RGWDedupManager::prepare_dedup_work()
   store->meta_list_keys_complete(handle);
 
   return total_obj_cnt;
+}
+
+int RGWDedupManager::set_sampling_ratio(int new_sampling_ratio)
+{
+  if (new_sampling_ratio <= 0 || new_sampling_ratio > 100) {
+    return -1;
+  }
+  sampling_ratio = new_sampling_ratio;
+  return 0;
 }
