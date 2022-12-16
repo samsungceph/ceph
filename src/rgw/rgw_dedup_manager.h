@@ -18,6 +18,7 @@ extern const string DEFAULT_COLD_POOL_NAME;
 
 class RGWFPManager;
 class RGWDedupWorker;
+class RGWChunkScrubWorker;
 class RGWDedupManager : public Thread
 {
   const DoutPrefixProvider* dpp;
@@ -28,6 +29,7 @@ class RGWDedupManager : public Thread
 
   shared_ptr<RGWFPManager> fpmanager;
   vector<unique_ptr<RGWDedupWorker>> dedup_workers;
+  vector<unique_ptr<RGWChunkScrubWorker>> scrub_workers;
 
   string cold_pool_name;
   string chunk_algo;
@@ -57,6 +59,8 @@ public:
 
   bool need_scrub(const uint32_t dedup_worked_cnt);
   void run_dedup(uint32_t& dedup_worked_cnt);
+  void run_scrub(uint32_t& dedup_worked_cnt);
+
   int append_ioctxs(rgw_pool base_pool);
   void update_base_pool_info();
   string create_cmd(const string& prefix,

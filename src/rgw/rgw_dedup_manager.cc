@@ -4,6 +4,7 @@
 #include "rgw_dedup_manager.h"
 #include "rgw_rados.h"
 #include "services/svc_zone.h"
+#include "include/rados/librados.h"
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -37,6 +38,8 @@ int RGWDedupManager::initialize()
   for (uint32_t i = 0; i < num_workers; ++i) {
     dedup_workers.emplace_back(
       make_unique<RGWDedupWorker>(dpp, cct, store, i, num_workers, fpmanager, chunk_algo, chunk_size, fp_algo, dedup_threshold, cold_ioctx));
+    scrub_workers.emplace_back(
+      make_unique<RGWChunkScrubWorker>(dpp, cct, store, i, num_workers, cold_ioctx));
   }
   return 0;
 }
@@ -90,6 +93,22 @@ void RGWDedupManager::run_dedup(uint32_t& dedup_worked_cnt)
   ++dedup_worked_cnt;
 }
 
+void RGWDedupManager::run_scrub(uint32_t& dedup_worked_cnt)
+{
+  for (auto& worker : scrub_workers) {
+    ceph_assert(worker.get());
+    worker->set_run(true);
+    string name = "ScrubWorker_" + to_string(worker->get_id());
+    worker->create(name.c_str());
+  }
+
+  for (auto& worker : scrub_workers) {
+    ceph_assert(worker.get());
+    worker->join();
+  }
+  dedup_worked_cnt = 0;
+}
+
 void* RGWDedupManager::entry()
 {
   ldpp_dout(dpp, 2) << "RGWDedupManager started" << dendl;
@@ -101,11 +120,10 @@ void* RGWDedupManager::entry()
       ceph_assert(fpmanager.get());
       fpmanager->reset_fpmap();
       update_base_pool_info();
-
       run_dedup(dedup_worked_cnt);
     } else {
       // scrub period
-
+      run_scrub(dedup_worked_cnt);
       dedup_worked_cnt = 0;
     }
     sleep(DEDUP_INTERVAL);
@@ -150,12 +168,15 @@ int RGWDedupManager::append_ioctxs(rgw_pool base_pool)
 
   for (uint32_t i = 0; i < num_workers; ++i) {
     dedup_workers[i]->append_base_ioctx(base_ioctx.get_id(), base_ioctx);
+    scrub_workers[i]->append_base_ioctx(base_ioctx.get_id(), base_ioctx);
   }
   return 0;
 }
 
-string RGWDedupManager::create_osd_pool_set_cmd(const string prefix, const string base_pool,
-                                                const string var, const string val)
+string RGWDedupManager::create_osd_pool_set_cmd(const string prefix,
+                                                const string base_pool,
+                                                const string var,
+                                                const string val)
 {
   vector<pair<string, string>> options;
   options.emplace_back(make_pair("pool", base_pool));
