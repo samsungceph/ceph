@@ -13,7 +13,6 @@
 using namespace std;
 using namespace librados;
 
-extern const string DEFAULT_CHUNK_POOL_POSTFIX;
 extern const string DEFAULT_COLD_POOL_POSTFIX;
 extern const string DEFAULT_CHUNK_SIZE;
 extern const string DEFAULT_CHUNK_ALGO;
@@ -50,8 +49,8 @@ class RGWDedupManager : public Thread
 
   /**
    *  There is a data_pool which is regarded as base-pool for a storage_classes.
-   *  For dedup, a chunk-pool and a cold-pool are required for each base-pool.
-   *  struct dedup_ioctx_set indicates the IoCtxs of the pools related to each other.
+   *  For a deduplication, a cold-pool is required for each base-pool.
+   *  dedup_ioctx_set indicates the IoCtxs of the pools related to each other.
    */
   struct dedup_ioctx_set {
     IoCtx base_pool_ctx;

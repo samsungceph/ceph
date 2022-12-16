@@ -5,6 +5,7 @@
 
 #include "rgw_dedup_manager.h"
 #include "rgw_rados.h"
+#include "include/rados/librados.h"
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -81,6 +82,60 @@ void RGWDedupManager::hand_out_objects()
   obj_scan_fwd ^= 1;
 }
 
+struct cold_pool_info_t;
+/*
+ *  append cold pool information which is required to get chunk objects
+ *  in order that each RGWChunkScrubWorker can get their own objects in cold pool
+ */
+int RGWDedupManager::prepare_scrub_work()
+{
+  Rados* rados = store->getRados()->get_rados_handle();
+  cold_pool_info_t cold_pool_info;
+  list<string> cold_pool_names;
+  map<string, librados::pool_stat_t> cold_pool_stats;
+  map<string, string> cold_to_base;   // cold_pool_name : base_pool_name
+
+  for (const auto& [base_pool_name, ioctxs] : ioctx_map) {
+    string cold_pool_name = ioctxs.cold_pool_ctx.get_pool_name();
+    cold_pool_names.emplace_back(cold_pool_name);
+    cold_to_base[cold_pool_name] = base_pool_name;
+  }
+
+  int ret = rados->get_pool_stats(cold_pool_names, cold_pool_stats);
+  if (ret < 0) {
+    ldpp_dout(dpp, 0) << "error fetching pool stats: " << cpp_strerror(ret) << dendl;
+    return ret;
+  }
+
+  for (const auto& [cold_pool_name, pool_stat] : cold_pool_stats) {
+    if (pool_stat.num_objects <= 0) {
+      ldpp_dout(dpp, 2) << "cold pool (" << cold_pool_name << ") is empty" << dendl;
+      continue;
+    }
+
+    cold_pool_info_t cold_pool_info;
+    ObjectCursor pool_begin, pool_end;
+    string base_pool_name = cold_to_base[cold_pool_name];
+
+    IoCtx cold_ioctx = ioctx_map[base_pool_name].cold_pool_ctx;
+    pool_begin = cold_ioctx.object_list_begin();
+    pool_end = cold_ioctx.object_list_end();
+    cold_pool_info.ioctx = cold_ioctx;
+    cold_pool_info.num_objs = pool_stat.num_objects;
+
+    for (int i = 0; i < num_workers; ++i) {
+      ObjectCursor shard_begin, shard_end;
+      cold_ioctx.object_list_slice(pool_begin, pool_end, i, num_workers,
+                                   &shard_begin, &shard_end);
+      cold_pool_info.shard_begin = shard_begin;
+      cold_pool_info.shard_end = shard_end;
+
+      scrub_workers[i]->append_cold_pool_info(cold_pool_info);
+    }
+  }
+  return ret;
+}
+
 string RGWDedupManager::create_mon_cmd(const string& prefix,
                                        const vector<pair<string, string>>& options)
 {
@@ -112,7 +167,6 @@ void* RGWDedupManager::entry()
       }
 
       hand_out_objects();
-
       // trigger RGWDedupWorkers
       for (auto& worker : dedup_workers) {
         ceph_assert(worker.get());
@@ -127,9 +181,15 @@ void* RGWDedupManager::entry()
       }
       ++dedup_worked_cnt;
     } else {
-      // trigger RGWChunkScrubWorkers
       for (auto& worker : scrub_workers) {
         ceph_assert(worker.get());
+        worker->clear_chunk_pool_info();
+      }
+      prepare_scrub_work();
+
+      // trigger RGWChunkScrubWorkers
+      for (auto& worker : scrub_workers) {
+        worker->set_run(true);
         string name = worker->get_id();
         worker->create(name.c_str());
       }
