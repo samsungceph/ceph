@@ -26,7 +26,8 @@ struct target_rados_object {
   string pool_name;
 };
 
-class Worker;
+class RGWDedupWorker;
+class RGWChunkScrubWorker;
 class RGWDedupManager : public Thread
 {
   const DoutPrefixProvider* dpp;
@@ -34,7 +35,9 @@ class RGWDedupManager : public Thread
   rgw::sal::RadosStore* store;
   bool down_flag;
   vector<target_rados_object> rados_objs;
-  vector<unique_ptr<Worker>> workers;
+
+  vector<unique_ptr<RGWDedupWorker>> dedup_workers;
+  vector<unique_ptr<RGWChunkScrubWorker>> scrub_workers;
 
   string cold_pool_postfix;
   string chunk_size;
@@ -80,7 +83,6 @@ public:
   void set_down_flag(bool new_flag) { down_flag = new_flag; }
   bool get_down_flag() { return down_flag; }
 
-  void reset_workers(bool need_scrub);
   void set_dedup_tier(string base_pool_name);
   int prepare_dedup_work();
   IoCtx get_or_create_ioctx(rgw_pool pool);
@@ -93,6 +95,7 @@ public:
   int set_sampling_ratio(int new_sampling_ratio);
   void append_rados_obj(target_rados_object new_obj) { rados_objs.emplace_back(new_obj); }
   size_t get_num_rados_obj() { return rados_objs.size(); }
+  int prepare_scrub_work();
 };
 
 #endif

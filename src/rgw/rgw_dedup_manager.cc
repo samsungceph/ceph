@@ -5,6 +5,7 @@
 
 #include "rgw_dedup_manager.h"
 #include "rgw_rados.h"
+#include "include/rados/librados.h"
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -18,11 +19,14 @@ const string DEFAULT_CHUNK_SIZE = "16384";
 const string DEFAULT_CHUNK_ALGO = "fastcdc";
 const string DEFAULT_FP_ALGO = "sha1";
 
+
 void RGWDedupManager::initialize()
 {
   for (int i = 0; i < num_workers; i++) {
-    auto worker = make_unique<RGWDedupWorker>(dpp, cct, store, i);
-    workers.emplace_back(move(worker));
+    auto dedup_worker = make_unique<RGWDedupWorker>(dpp, cct, store, i);
+    dedup_workers.emplace_back(move(dedup_worker));
+    auto scrub_worker = make_unique<RGWChunkScrubWorker>(dpp, cct, store, i, num_workers);
+    scrub_workers.emplace_back(move(scrub_worker));
   }
 }
 
@@ -47,11 +51,11 @@ void RGWDedupManager::hand_out_objects(vector<size_t> sampled_indexes)
 {
   size_t num_objs_per_worker = sampled_indexes.size() / num_workers;
   int remain_objs = sampled_indexes.size() % num_workers;
-  for (auto& worker: workers) {
+  for (auto& worker: dedup_workers) {
     worker->clear_objs();
   }
 
-  vector<unique_ptr<Worker>>::iterator it = workers.begin();
+  vector<unique_ptr<RGWDedupWorker>>::iterator it = dedup_workers.begin();
   for (auto idx : sampled_indexes) {
     (*it)->append_obj(rados_objs[idx]);
     if ((*it)->get_num_objs() >= num_objs_per_worker) {
@@ -63,6 +67,61 @@ void RGWDedupManager::hand_out_objects(vector<size_t> sampled_indexes)
       ++it;
     }
   }
+}
+
+struct cold_pool_info_t;
+/*
+ *  append cold pool information which is required to get chunk objects
+ *  in order that each RGWChunkScrubWorker can get their own objects in cold pool
+ */
+int RGWDedupManager::prepare_scrub_work()
+{
+  int ret = 0;
+  Rados* rados = store->getRados()->get_rados_handle();
+  cold_pool_info_t cold_pool_info;
+  list<string> cold_pool_names;
+  map<string, librados::pool_stat_t> cold_pool_stats;
+  map<string, string> cold_to_base;   // cold_pool_name : base_pool_name
+
+  for (const auto& [base_pool_name, ioctxs] : ioctx_map) {
+    string cold_pool_name = ioctxs.cold_pool_ctx.get_pool_name();
+    cold_pool_names.emplace_back(cold_pool_name);
+    cold_to_base[cold_pool_name] = base_pool_name;
+  }
+
+  ret = rados->get_pool_stats(cold_pool_names, cold_pool_stats);
+  if (ret < 0) {
+    ldpp_dout(dpp, 0) << "error fetching pool stats: " << cpp_strerror(ret) << dendl;
+    return ret;
+  }
+
+  for (const auto& [cold_pool_name, pool_stat] : cold_pool_stats) {
+    if (pool_stat.num_objects <= 0) {
+      ldpp_dout(dpp, 2) << "cold pool (" << cold_pool_name << ") is empty" << dendl;
+      continue;
+    }
+
+    cold_pool_info_t cold_pool_info;
+    ObjectCursor pool_begin, pool_end;
+    string base_pool_name = cold_to_base[cold_pool_name];
+
+    IoCtx cold_ioctx = ioctx_map[base_pool_name].cold_pool_ctx;
+    pool_begin = cold_ioctx.object_list_begin();
+    pool_end = cold_ioctx.object_list_end();
+    cold_pool_info.ioctx = cold_ioctx;
+    cold_pool_info.num_objs = pool_stat.num_objects;
+
+    for (int i = 0; i < num_workers; ++i) {
+      ObjectCursor shard_begin, shard_end;
+      cold_ioctx.object_list_slice(pool_begin, pool_end, i, num_workers,
+                                   &shard_begin, &shard_end);
+      cold_pool_info.shard_begin = shard_begin;
+      cold_pool_info.shard_end = shard_end;
+
+      scrub_workers[i]->append_cold_pool_info(cold_pool_info);
+    }
+  }
+  return ret;
 }
 
 void* RGWDedupManager::entry()
@@ -101,8 +160,9 @@ void* RGWDedupManager::entry()
       ldpp_dout(dpp, 2) << "RGWChunkScrubWorkers start" << dendl;
 
       for (auto& worker : scrub_workers) {
-        worker->initialize();
+	worker->clear_chunk_pool_info();
       }
+      prepare_scrub_work();
 
       // trigger RGWChunkScrubWorkers
       for (auto& worker : scrub_workers) {
@@ -132,10 +192,12 @@ void RGWDedupManager::stop()
 
 void RGWDedupManager::finalize()
 {
-  for (auto& worker : workers) {
-    worker.reset();
+  for (int i = 0; i < num_workers; ++i) {
+    dedup_workers[i].reset();
+    scrub_workers[i].reset();
   }
-  workers.clear();
+  dedup_workers.clear();
+  scrub_workers.clear();
 }
 
 librados::IoCtx RGWDedupManager::get_or_create_ioctx(rgw_pool pool)
