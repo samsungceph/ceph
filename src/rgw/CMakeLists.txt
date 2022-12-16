@@ -264,6 +264,8 @@ target_link_libraries(rgw_common
     cls_timeindex_client
     cls_user_client
     cls_version_client
+    cls_cas_client
+    cls_cas_internal
     librados
     rt
     ICU::uc
