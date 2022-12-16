@@ -3,6 +3,7 @@
 
 #include "rgw_dedup_manager.h"
 #include "rgw_rados.h"
+#include "include/rados/librados.h"
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -91,6 +92,49 @@ void RGWDedupManager::hand_out_objects()
   obj_scan_fwd ^= 1;
 }
 
+struct cold_pool_info_t;
+/*
+ *  append cold pool information which is required to get chunk objects
+ *  in order that each RGWChunkScrubWorker can get their own objects in cold pool
+ */
+int RGWDedupManager::prepare_scrub()
+{
+  Rados* rados = store->getRados()->get_rados_handle();
+  list<string> cold_pool_names = {cold_pool_name};
+  map<string, librados::pool_stat_t> cold_pool_stats;
+
+  int ret = rados->get_pool_stats(cold_pool_names, cold_pool_stats);
+  if (ret < 0) {
+    ldpp_dout(dpp, 0) << "error fetching pool stats: " << cpp_strerror(ret) << dendl;
+    return ret;
+  }
+
+  for (const auto& [cold_pool_name, pool_stat] : cold_pool_stats) {
+    if (pool_stat.num_objects <= 0) {
+      ldpp_dout(dpp, 2) << "cold pool (" << cold_pool_name << ") is empty" << dendl;
+      continue;
+    }
+
+    cold_pool_info_t cold_pool_info;
+    ObjectCursor pool_begin, pool_end;
+    pool_begin = cold_ioctx.object_list_begin();
+    pool_end = cold_ioctx.object_list_end();
+    cold_pool_info.ioctx = cold_ioctx;
+    cold_pool_info.num_objs = pool_stat.num_objects;
+
+    for (int i = 0; i < num_workers; ++i) {
+      ObjectCursor shard_begin, shard_end;
+      cold_ioctx.object_list_slice(pool_begin, pool_end, i, num_workers,
+                                   &shard_begin, &shard_end);
+      cold_pool_info.shard_begin = shard_begin;
+      cold_pool_info.shard_end = shard_end;
+
+      scrub_workers[i]->append_cold_pool_info(cold_pool_info);
+    }
+  }
+  return ret;
+}
+
 string RGWDedupManager::create_cmd(const string& prefix,
                                        const vector<pair<string, string>>& options)
 {
@@ -122,7 +166,6 @@ void* RGWDedupManager::entry()
       }
 
       hand_out_objects();
-
       // trigger RGWDedupWorkers
       for (auto& worker : dedup_workers) {
         ceph_assert(worker.get());
@@ -137,9 +180,16 @@ void* RGWDedupManager::entry()
       }
       ++dedup_worked_cnt;
     } else {
-      // trigger RGWChunkScrubWorkers
+      // scrub period
       for (auto& worker : scrub_workers) {
         ceph_assert(worker.get());
+        worker->clear_chunk_pool_info();
+      }
+      prepare_scrub();
+
+      // trigger RGWChunkScrubWorkers
+      for (auto& worker : scrub_workers) {
+        worker->set_run(true);
         string name = "ScrubWorker_" + to_string(worker->get_id());
         worker->create(name.c_str());
       }
