@@ -12,6 +12,8 @@
 
 extern const int MAX_OBJ_SCAN_SIZE;
 
+extern const int MAX_OBJ_SCAN_SIZE;
+
 using namespace std;
 using namespace librados;
 
@@ -123,6 +125,35 @@ public:
                                uint32_t chunk_size);
   string generate_fingerprint(bufferlist chunk_data, string fp_algo);
   string get_archived_obj_name(IoCtx& ioctx, const string obj_name);
+};
+
+class RGWChunkScrubWorker : public Worker
+{
+public:
+  RGWChunkScrubWorker(const DoutPrefixProvider* _dpp,
+                      CephContext* _cct,
+                      rgw::sal::RadosStore* _store,
+                      int _id,
+                      int _num_workers,
+                      IoCtx _cold_ioctx)
+    : Worker(_dpp, _cct, _store, _id, _num_workers, _cold_ioctx) {}
+  RGWChunkScrubWorker() = delete;
+  RGWChunkScrubWorker(const RGWChunkScrubWorker& rhs) = delete;
+  RGWChunkScrubWorker& operator=(const RGWChunkScrubWorker& rhs) = delete;
+  virtual ~RGWChunkScrubWorker() override {}
+  
+  virtual void* entry() override;
+
+  // fix mismatched chunk reference
+  int do_chunk_repair(IoCtx& cold_ioctx, const string chunk_obj_name,
+                      const hobject_t src_obj, int chunk_ref_cnt,
+                      int src_ref_cnt);
+  
+  // get references of chunk object
+  int get_chunk_refs(IoCtx& chunk_ioctx, const string& chunk_oid, chunk_refs_t& refs);
+
+  // check whether dedup reference is mismatched (false is mismatched) 
+  int get_src_ref_cnt(const hobject_t& src_obj, const string& chunk_oid);
 };
 
 #endif
