@@ -4,6 +4,7 @@
 #include "rgw_dedup_manager.h"
 #include "rgw_rados.h"
 #include "services/svc_zone.h"
+#include "include/rados/librados.h"
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -51,6 +52,8 @@ int RGWDedupManager::initialize()
     dedup_workers.emplace_back(
       make_unique<RGWDedupWorker>(dpp, cct, store, i, num_workers, fpmanager, chunk_algo,
                                   chunk_size, fp_algo, dedup_threshold, cold_ioctx));
+    scrub_workers.emplace_back(
+      make_unique<RGWChunkScrubWorker>(dpp, cct, store, i, num_workers, cold_ioctx));
   }
   return 0;
 }
@@ -115,6 +118,8 @@ void* RGWDedupManager::entry()
       ++dedup_worked_cnt;
     } else {
       // do scrub
+      run_worker(scrub_workers, "ScrubWorker_");
+      wait_worker(scrub_workers);
       dedup_worked_cnt = 0;
     }
     sleep(DEDUP_INTERVAL);
@@ -151,6 +156,7 @@ int RGWDedupManager::append_ioctxs(rgw_pool base_pool)
 
   for (uint32_t i = 0; i < num_workers; ++i) {
     dedup_workers[i]->append_base_ioctx(base_ioctx.get_id(), base_ioctx);
+    scrub_workers[i]->append_base_ioctx(base_ioctx.get_id(), base_ioctx);
   }
   return 0;
 }

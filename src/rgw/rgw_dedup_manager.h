@@ -16,6 +16,7 @@ using namespace librados;
 
 class RGWFPManager;
 class RGWDedupWorker;
+class RGWChunkScrubWorker;
 class RGWDedupManager : public Thread
 {
   const DoutPrefixProvider* dpp;
@@ -26,6 +27,7 @@ class RGWDedupManager : public Thread
 
   shared_ptr<RGWFPManager> fpmanager;
   vector<unique_ptr<RGWDedupWorker>> dedup_workers;
+  vector<unique_ptr<RGWChunkScrubWorker>> scrub_workers;
 
   string cold_pool_name;
   string chunk_algo;
