@@ -10,7 +10,6 @@
 using namespace std;
 using namespace librados;
 
-struct target_rados_object;
 class Worker : public Thread
 {
 protected:
@@ -18,7 +17,6 @@ protected:
   CephContext* cct;
   rgw::sal::RadosStore* store;
   int id;
-  vector<target_rados_object> rados_objs;
   bool is_run;
 
 public:
@@ -27,22 +25,21 @@ public:
          rgw::sal::RadosStore* _store,
          int _id)
     : dpp(_dpp), cct(_cct), store(_store), id(_id), is_run(false) {}
-  virtual ~Worker() {}                                                                                                                                                   
+  virtual ~Worker() {}
 
   virtual void* entry() = 0;
-  virtual void stop() = 0;
   virtual void finalize() = 0;
   virtual void initialize() = 0;
+  void stop();
 
-  void clear_objs();
-  void append_obj(target_rados_object new_obj);
   virtual string get_id() = 0;
-  size_t get_num_objs();
   void set_run(bool run_status);
 };
 
+struct target_rados_object;
 class RGWDedupWorker : public Worker
 {
+  vector<target_rados_object> rados_objs;
 
 public:
   RGWDedupWorker(const DoutPrefixProvider* _dpp,
@@ -53,11 +50,13 @@ public:
   virtual ~RGWDedupWorker() override {}
 
   virtual void* entry() override;
-  virtual void stop() override;
   virtual void finalize() override;
   virtual void initialize() override;
 
   virtual string get_id() override;
+  void clear_objs();
+  void append_obj(target_rados_object new_obj);
+  size_t get_num_objs();
 };
 
 class RGWChunkScrubWorker : public Worker
@@ -75,7 +74,6 @@ public:
   virtual ~RGWChunkScrubWorker() override {}
   
   virtual void* entry() override;
-  virtual void stop() override;
   virtual void initialize() override;
   virtual void finalize() override;
 

@@ -13,12 +13,10 @@
 using namespace std;
 using namespace librados;
 
-extern const string DEFAULT_CHUNK_POOL_POSTFIX;
 extern const string DEFAULT_COLD_POOL_POSTFIX;
 extern const string DEFAULT_CHUNK_SIZE;
 extern const string DEFAULT_CHUNK_ALGO;
 extern const string DEFAULT_FP_ALGO;
-extern const string DEFAULT_HITSET_TYPE;
 extern const int DEFAULT_NUM_WORKERS;
 extern const int DEFAULT_SAMPLING_RATIO;
 extern const int DEFAULT_DEDUP_SCRUB_RATIO;
@@ -38,12 +36,10 @@ class RGWDedupManager : public Thread
   vector<target_rados_object> rados_objs;
   vector<unique_ptr<Worker>> workers;
 
-  string chunk_pool_postfix;
   string cold_pool_postfix;
   string chunk_size;
   string chunk_algo;
   string fp_algo;
-  string hitset_type;
   int num_workers;
   int sampling_ratio;
   int dedup_scrub_ratio;
@@ -51,12 +47,11 @@ class RGWDedupManager : public Thread
 
   /**
    *  There is a data_pool which is regarded as base-pool for a storage_classes.
-   *  For dedup, a chunk-pool and a cold-pool are required for each base-pool.
-   *  struct dedup_ioctx_set indicates the IoCtxs of the pools related to each other.
+   *  For a deduplication, a cold-pool is required for each base-pool.
+   *  dedup_ioctx_set indicates the IoCtxs of the pools related to each other.
    */
   struct dedup_ioctx_set {
     IoCtx base_pool_ctx;
-    IoCtx chunk_pool_ctx;
     IoCtx cold_pool_ctx;
   };
   // sc data pool (base-pool name) : ioctx_set
@@ -67,12 +62,10 @@ public:
                  CephContext* _cct,
                  rgw::sal::RadosStore* _store)
     : dpp(_dpp), cct(_cct), store(_store), down_flag(true),
-      chunk_pool_postfix(DEFAULT_CHUNK_POOL_POSTFIX),
       cold_pool_postfix(DEFAULT_COLD_POOL_POSTFIX),
       chunk_size(DEFAULT_CHUNK_SIZE),
       chunk_algo(DEFAULT_CHUNK_ALGO),
       fp_algo(DEFAULT_FP_ALGO),
-      hitset_type(DEFAULT_HITSET_TYPE),
       num_workers(DEFAULT_NUM_WORKERS),
       sampling_ratio(DEFAULT_SAMPLING_RATIO),
       dedup_scrub_ratio(DEFAULT_DEDUP_SCRUB_RATIO),

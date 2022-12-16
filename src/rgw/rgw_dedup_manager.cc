@@ -13,28 +13,16 @@ const int DEFAULT_SAMPLING_RATIO = 50;
 const int MAX_OBJ_SCAN_SIZE = 100;
 const int MAX_BUCKET_SCAN_SIZE = 100;
 const int DEFAULT_DEDUP_SCRUB_RATIO = 10;
-const string DEFAULT_CHUNK_POOL_POSTFIX = "_chunk";
 const string DEFAULT_COLD_POOL_POSTFIX = "_cold";
 const string DEFAULT_CHUNK_SIZE = "16384";
 const string DEFAULT_CHUNK_ALGO = "fastcdc";
 const string DEFAULT_FP_ALGO = "sha1";
-const string DEFAULT_HITSET_TYPE = "bloom";
 
 void RGWDedupManager::initialize()
 {
   for (int i = 0; i < num_workers; i++) {
     auto worker = make_unique<RGWDedupWorker>(dpp, cct, store, i);
     workers.emplace_back(move(worker));
-  }
-}
-
-void RGWDedupManager::reset_workers(bool need_scrub)
-{
-  for (int i = 0; i < num_workers; i++) {
-    if (need_scrub) {
-      workers[i].reset(new RGWChunkScrubWorker(dpp, cct, store, i, num_workers));
-    }
-    workers[i].reset(new RGWDedupWorker(dpp, cct, store, i));
   }
 }
 
@@ -95,36 +83,40 @@ void* RGWDedupManager::entry()
 
       vector<size_t> sampled_indexes = sample_rados_objects();
       hand_out_objects(sampled_indexes);
+
+      // trigger RGWDedupWorkers
+      for (auto& worker : dedup_workers) {
+	worker->set_run(true);
+	string name = worker->get_id();
+	worker->create(name.c_str());
+      }
+
+      // all RGWDedupWorkers synchronized here
+      for (auto& worker : dedup_workers) {
+	worker->join();
+      }
       ++dedup_worked_cnt;
     }
     else {
       ldpp_dout(dpp, 2) << "RGWChunkScrubWorkers start" << dendl;
 
-      reset_workers(dedup_worked_cnt == dedup_scrub_ratio);
-      for (auto& worker : workers) {
+      for (auto& worker : scrub_workers) {
         worker->initialize();
       }
-    }   
 
-    // trigger RGWDedupWorkers
-    for (auto& worker : workers)
-    {
-      worker->set_run(true);
-      string name = worker->get_id();
-      worker->create(name.c_str());
-    }
+      // trigger RGWChunkScrubWorkers
+      for (auto& worker : scrub_workers) {
+	worker->set_run(true);
+	string name = worker->get_id();
+	worker->create(name.c_str());
+      }
 
-    // all RGWDedupWorkers synchronozed here
-    for (auto& w: workers)
-    {
-      w->join();
-    }
-
-    if (dedup_worked_cnt == dedup_scrub_ratio) {
+      // all RGWChunkScrubWorkers synchronozed here
+      for (auto& worker : scrub_workers) {
+	worker->join();
+      }
       dedup_worked_cnt = 0;
-      reset_workers(dedup_worked_cnt == dedup_scrub_ratio);
-    }
-    
+    }   
     sleep(3);
   }
 
@@ -159,24 +151,21 @@ void RGWDedupManager::append_ioctxs(rgw_pool base_pool)
   string base_pool_name = base_pool.name;
   librados::IoCtx base_ioctx = get_or_create_ioctx(base_pool);
 
-  string chunk_pool_name = base_pool_name + chunk_pool_postfix;
-  librados::IoCtx chunk_ioctx = get_or_create_ioctx(rgw_pool(chunk_pool_name));
-
   string cold_pool_name = base_pool_name + cold_pool_postfix;
   librados::IoCtx cold_ioctx = get_or_create_ioctx(rgw_pool(cold_pool_name));
 
-  dedup_ioctx_set pool_set{base_ioctx, chunk_ioctx, cold_ioctx};
+  dedup_ioctx_set pool_set{base_ioctx, cold_ioctx};
   ioctx_map.insert({base_pool_name, pool_set});
 }
 
 void RGWDedupManager::set_dedup_tier(string base_pool_name)
 {
-  string chunk_pool_name = ioctx_map[base_pool_name].chunk_pool_ctx.get_pool_name();
+  string cold_pool_name = ioctx_map[base_pool_name].cold_pool_ctx.get_pool_name();
   librados::Rados* rados = store->getRados()->get_rados_handle();
   bufferlist inbl;
   int ret = rados->mon_command(
     "{\"prefix\": \"osd pool set\", \"pool\": \"" + base_pool_name
-    + "\",\"var\": \"dedup_tier\", \"val\": \"" + chunk_pool_name
+    + "\",\"var\": \"dedup_tier\", \"val\": \"" + cold_pool_name
     + "\"}", inbl, nullptr, nullptr);
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "ERROR: failed to set dedup_tier" << dendl;
@@ -205,15 +194,6 @@ void RGWDedupManager::set_dedup_tier(string base_pool_name)
 
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "ERROR: failed to set fingerprint_algorithm" << dendl;
-  }
-
-  ret = rados->mon_command(
-    "{\"prefix\": \"osd pool set\", \"pool\": \"" + base_pool_name
-    + "\",\"var\": \"hit_set_type\", \"val\": \"" + hitset_type
-    + "\"}", inbl, nullptr, nullptr);
-
-  if (ret < 0) {
-    ldpp_dout(dpp, 0) << "ERROR: failed to set hit_set_type" << dendl;
   }
 }
 
@@ -308,7 +288,7 @@ int RGWDedupManager::prepare_dedup_work()
                   ldpp_dout(dpp, 20) << "get_raw_obj() got duplicated rados object ("
                                      << rados_obj.oid << ")" << dendl;
                   is_exist = true;
-                  continue;
+                  break;
                 }
               }
               if (!is_exist) {
