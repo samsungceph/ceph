@@ -18,6 +18,7 @@ extern const uint32_t DEFAULT_DEDUP_SCRUB_RATIO;
 
 class RGWFPManager;
 class RGWDedupWorker;
+class RGWChunkScrubWorker;
 class RGWDedupManager : public Thread
 {
   const DoutPrefixProvider* dpp;
@@ -28,6 +29,7 @@ class RGWDedupManager : public Thread
 
   shared_ptr<RGWFPManager> fpmanager;
   vector<unique_ptr<RGWDedupWorker>> dedup_workers;
+  vector<unique_ptr<RGWChunkScrubWorker>> scrub_workers;
 
   string cold_pool_name;
   string chunk_algo;
@@ -60,6 +62,7 @@ public:
   template <typename WorkerType>
   void wait_worker(vector<WorkerType>& workers);
   void run_dedup(uint32_t& dedup_worked_cnt);
+  void run_scrub(uint32_t& dedup_worked_cnt);
 
   int append_ioctxs(rgw_pool base_pool);
   void update_base_pool_info();
@@ -68,6 +71,7 @@ public:
   string create_osd_pool_set_cmd(const string prefix, const string base_pool,
                                  const string var, const string val);
   void append_dedup_worker(unique_ptr<RGWDedupWorker>&& new_worker);
+  void append_scrub_worker(unique_ptr<RGWChunkScrubWorker>&& new_worker);
 };
 
 #endif

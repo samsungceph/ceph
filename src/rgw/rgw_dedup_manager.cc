@@ -4,6 +4,7 @@
 #include "rgw_dedup_manager.h"
 #include "rgw_rados.h"
 #include "services/svc_zone.h"
+#include "include/rados/librados.h"
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -52,6 +53,8 @@ int RGWDedupManager::initialize()
     append_dedup_worker(make_unique<RGWDedupWorker>(
       dpp, cct, store, i, num_workers, fpmanager, chunk_algo, chunk_size,
       fp_algo, dedup_threshold, cold_ioctx));
+    append_scrub_worker(make_unique<RGWChunkScrubWorker>(
+      dpp, cct, store, i, num_workers, cold_ioctx));
   }
   return 0;
 }
@@ -90,6 +93,16 @@ void RGWDedupManager::run_dedup(uint32_t& dedup_worked_cnt)
   ++dedup_worked_cnt;
 }
 
+void RGWDedupManager::run_scrub(uint32_t& dedup_worked_cnt)
+{
+  ceph_assert(!scrub_workers.empty());
+  for (auto& worker : scrub_workers) {
+    ceph_assert(worker.get());
+    worker->create(("ScrubWorker_" + to_string(worker->get_id())).c_str());
+  }
+  dedup_worked_cnt = 0;
+}
+
 template <typename WorkerType>
 void RGWDedupManager::wait_worker(vector<WorkerType>& workers)
 {
@@ -115,7 +128,8 @@ void* RGWDedupManager::entry()
       wait_worker(dedup_workers);
     } else {
       // do scrub
-      dedup_worked_cnt = 0;
+      run_scrub(dedup_worked_cnt);
+      wait_worker(scrub_workers);
     }
     sleep(DEDUP_INTERVAL);
   }
@@ -151,6 +165,7 @@ int RGWDedupManager::append_ioctxs(rgw_pool base_pool)
 
   for (uint32_t i = 0; i < num_workers; ++i) {
     dedup_workers[i]->append_base_ioctx(base_ioctx.get_id(), base_ioctx);
+    scrub_workers[i]->append_base_ioctx(base_ioctx.get_id(), base_ioctx);
   }
   return 0;
 }
@@ -179,5 +194,11 @@ void RGWDedupManager::append_dedup_worker(unique_ptr<RGWDedupWorker>&& new_worke
 {
   ceph_assert(new_worker.get());
   dedup_workers.emplace_back(move(new_worker));
+}
+
+void RGWDedupManager::append_scrub_worker(unique_ptr<RGWChunkScrubWorker>&& new_worker)
+{
+  ceph_assert(new_worker.get());
+  scrub_workers.emplace_back(move(new_worker));
 }
 
