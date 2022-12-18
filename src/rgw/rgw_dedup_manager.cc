@@ -35,7 +35,7 @@ vector<size_t> RGWDedupManager::sample_rados_objects()
   size_t num_objs = get_num_rados_obj();
   vector<size_t> sampled_indexes(num_objs);
   // fill out vector to get sampled indexes
-  for (size_t i = 0; i < num_objs; i++) {
+  for (size_t i = 0; i < num_objs; ++i) {
     sampled_indexes[i] = i;
   }
 

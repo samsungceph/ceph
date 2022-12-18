@@ -7,9 +7,13 @@
 #include "include/rados/librados.hpp"
 #include "rgw_dedup_manager.h"
 
+extern const int MAX_OBJ_SCAN_SIZE;
+
 using namespace std;
 using namespace librados;
 
+struct target_rados_object;
+struct dedup_ioctx_set;
 class Worker : public Thread
 {
 protected:
@@ -36,16 +40,15 @@ public:
   void set_run(bool run_status);
 };
 
-struct target_rados_object;
 class RGWDedupWorker : public Worker
 {
   vector<target_rados_object> rados_objs;
 
 public:
   RGWDedupWorker(const DoutPrefixProvider* _dpp,
-              CephContext* _cct,
-              rgw::sal::RadosStore* _store,
-              int _id)
+                 CephContext* _cct,
+                 rgw::sal::RadosStore* _store,
+                 int _id)
     : Worker(_dpp, _cct, _store, _id) {}
   virtual ~RGWDedupWorker() override {}
 
@@ -59,9 +62,18 @@ public:
   size_t get_num_objs();
 };
 
+struct cold_pool_info_t
+{
+  IoCtx ioctx;
+  uint64_t num_objs;
+  ObjectCursor shard_begin;
+  ObjectCursor shard_end;
+};
+
 class RGWChunkScrubWorker : public Worker
 {
   int num_threads;
+  vector<cold_pool_info_t> cold_pool_info;
 
 public:
   RGWChunkScrubWorker(const DoutPrefixProvider* _dpp,
@@ -78,6 +90,11 @@ public:
   virtual void finalize() override;
 
   virtual string get_id() override;
+  void append_cold_pool_info(cold_pool_info_t cold_pool_info);
+  void clear_chunk_pool_info() {cold_pool_info.clear(); }
+  int do_chunk_repair(IoCtx& cold_ioctx, const string chunk_obj_name,
+		      const hobject_t src_obj, int chunk_ref_cnt,
+		      int src_ref_cnt);
 };
 
 #endif
