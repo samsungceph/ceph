@@ -58,12 +58,15 @@ void RGWDedupManager::hand_out_objects(vector<size_t> sampled_indexes)
   vector<unique_ptr<RGWDedupWorker>>::iterator it = dedup_workers.begin();
   for (auto idx : sampled_indexes) {
     (*it)->append_obj(rados_objs[idx]);
-    if ((*it)->get_num_objs() >= num_objs_per_worker) {
+    if ((*it)->get_num_objs() == num_objs_per_worker) {
       // append remain object for even distribution if remain_objs exists
       if (remain_objs > 0) {
         --remain_objs;
         continue;
       }
+      ++it;
+    }
+    else if ((*it)->get_num_objs() > num_objs_per_worker) {
       ++it;
     }
   }
