@@ -149,6 +149,7 @@ set(librgw_common_srcs
   rgw_tracer.cc
   rgw_lua_background.cc
   rgw_dedup.cc
+  rgw_fp_manager.cc
   rgw_dedup_manager.cc
   driver/rados/cls_fifo_legacy.cc
   driver/rados/rgw_bucket.cc
