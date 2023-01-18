@@ -486,7 +486,7 @@ done:
 
       if (s->op_type == RGW_OP_GET_OBJ || s->op_type == RGW_OP_PUT_OBJ) {
         rgw_obj rgwobj = s->object->get_obj();
-        ldpp_dout(op, 5) << "insert rgw_obj(" << rgwobj << ") into RGWIOTracker" << dendl;
+        ldpp_dout(s, 5) << "insert rgw_obj(" << rgwobj << ") into RGWIOTracker" << dendl;
         if (rgwobj.bucket.bucket_id != "" && rgwobj.key.name != "") {
           rgw_dedup->trace_obj(rgwobj);
         }
