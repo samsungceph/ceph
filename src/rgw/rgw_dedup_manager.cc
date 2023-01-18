@@ -19,13 +19,16 @@ const string DEFAULT_CHUNK_SIZE = "16384";
 const string DEFAULT_CHUNK_ALGO = "fastcdc";
 const string DEFAULT_FP_ALGO = "sha1";
 
-
 void RGWDedupManager::initialize()
 {
+  fpmanager = make_shared<RGWFPManager>(chunk_algo, stoi(chunk_size), fp_algo);
+
   for (int i = 0; i < num_workers; i++) {
-    auto dedup_worker = make_unique<RGWDedupWorker>(dpp, cct, store, i);
+    auto dedup_worker = make_unique<RGWDedupWorker>(
+      dpp, cct, store, i, fpmanager);
     dedup_workers.emplace_back(move(dedup_worker));
-    auto scrub_worker = make_unique<RGWChunkScrubWorker>(dpp, cct, store, i, num_workers);
+    auto scrub_worker = make_unique<RGWChunkScrubWorker>(
+      dpp, cct, store, i, num_workers);
     scrub_workers.emplace_back(move(scrub_worker));
   }
 }
@@ -145,6 +148,7 @@ void* RGWDedupManager::entry()
 
       // trigger RGWDedupWorkers
       for (auto& worker : dedup_workers) {
+  fpmanager->reset_fpmap();
 	worker->set_run(true);
 	string name = worker->get_id();
 	worker->create(name.c_str());
