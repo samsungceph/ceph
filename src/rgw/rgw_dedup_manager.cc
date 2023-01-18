@@ -31,7 +31,8 @@ void RGWDedupManager::initialize()
   io_tracker->initialize();
 
   for (int i = 0; i < num_workers; i++) {
-    auto dedup_worker = make_unique<RGWDedupWorker>(dpp, cct, store, i);
+    auto dedup_worker = make_unique<RGWDedupWorker>(
+      dpp, cct, store, i, fpmanager);
     dedup_workers.emplace_back(move(dedup_worker));
     auto scrub_worker = make_unique<RGWChunkScrubWorker>(
       dpp, cct, store, i, num_workers);

@@ -5,7 +5,9 @@
 #define CEPH_RGW_DEDUP_WORKER_H
 
 #include "include/rados/librados.hpp"
+#include "rgw_fp_manager.h"
 #include "rgw_dedup_manager.h"
+#include "common/CDC.h"
 
 extern const int MAX_OBJ_SCAN_SIZE;
 
@@ -14,6 +16,9 @@ using namespace librados;
 
 struct target_rados_object;
 struct dedup_ioctx_set;
+
+class RGWFPManager;
+
 class Worker : public Thread
 {
 protected:
@@ -40,26 +45,42 @@ public:
   void set_run(bool run_status);
 };
 
+struct chunk_t {
+  size_t start = 0;
+  size_t size = 0;
+  string fingerprint = "";
+  bufferlist data;
+};
 class RGWDedupWorker : public Worker
 {
+  shared_ptr<RGWFPManager> fpmanager;
   vector<target_rados_object> rados_objs;
 
 public:
   RGWDedupWorker(const DoutPrefixProvider* _dpp,
                  CephContext* _cct,
                  rgw::sal::RadosStore* _store,
-                 int _id)
-    : Worker(_dpp, _cct, _store, _id) {}
+                 int _id,
+                 shared_ptr<RGWFPManager> _fpmanager)
+    : Worker(_dpp, _cct, _store, _id), fpmanager(_fpmanager) {}
   virtual ~RGWDedupWorker() override {}
 
+  virtual void initialize() override;
   virtual void* entry() override;
   virtual void finalize() override;
-  virtual void initialize() override;
-
-  virtual string get_id() override;
-  void clear_objs();
+  
   void append_obj(target_rados_object new_obj);
   size_t get_num_objs();
+  void clear_objs();
+
+  virtual string get_id() override;  
+
+  bufferlist read_object_data(IoCtx &ioctx, string oid);
+  vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> do_cdc(bufferlist &data, string chunk_algo, ssize_t chunk_size);
+  string generate_fingerprint(bufferlist chunk_data, string fp_algo);
+  int check_object_exists(IoCtx& ioctx, string object_name);
+  int try_set_chunk(IoCtx& ioctx, IoCtx &cold_ioctx, string object_name, chunk_t &chunk);
+  int write_object_data(IoCtx &ioctx, string object_name, bufferlist &data);
 };
 
 struct cold_pool_info_t
