@@ -30,6 +30,8 @@ int RGWDedupManager::initialize()
   dedup_threshold = cct->_conf->rgw_dedup_threshold;
   dedup_scrub_ratio = cct->_conf->rgw_dedup_scrub_ratio;
 
+  // initialize components
+  fpmanager = make_shared<RGWFPManager>();
   return 0;
 }
 
@@ -88,6 +90,7 @@ void RGWDedupManager::stop()
 
 void RGWDedupManager::finalize()
 {
+  fpmanager.reset();
 }
 
 int RGWDedupManager::append_ioctxs(rgw_pool base_pool)

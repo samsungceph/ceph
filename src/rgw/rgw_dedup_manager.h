@@ -8,12 +8,14 @@
 #include "common/Cond.h"
 #include "common/Thread.h"
 #include "rgw_sal_rados.h"
+#include "rgw_fp_manager.h"
 
 using namespace std;
 using namespace librados;
 
 extern const string DEFAULT_COLD_POOL_NAME;
 
+class RGWFPManager;
 class RGWDedupManager : public Thread
 {
   const DoutPrefixProvider* dpp;
@@ -21,6 +23,8 @@ class RGWDedupManager : public Thread
   rgw::sal::RadosStore* store;
   bool down_flag;
   Rados* rados;
+
+  shared_ptr<RGWFPManager> fpmanager;
 
   string cold_pool_name;
   string chunk_algo;
