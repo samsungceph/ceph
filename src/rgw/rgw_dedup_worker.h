@@ -6,7 +6,9 @@
 
 #include "cls/cas/cls_cas_internal.h"
 #include "include/rados/librados.hpp"
+#include "rgw_fp_manager.h"
 #include "rgw_dedup_manager.h"
+#include "common/CDC.h"
 
 extern const int MAX_OBJ_SCAN_SIZE;
 
@@ -14,6 +16,9 @@ using namespace std;
 using namespace librados;
 
 struct target_rados_object;
+
+class RGWFPManager;
+
 class Worker : public Thread
 {
 protected:
@@ -38,33 +43,60 @@ public:
   virtual ~Worker() {}
 
   virtual void* entry() = 0;
-  virtual void finalize() = 0;
   void stop();
 
   int get_id();
   void set_run(bool run_status);
 };
 
+// <chunk data, <offset, length>>
+using ChunkInfoType = tuple<bufferlist, pair<uint64_t, uint64_t>>;
 class RGWDedupWorker : public Worker
 {
+  shared_ptr<RGWFPManager> fpmanager;
   vector<target_rados_object> rados_objs;
+  string chunk_algo;
+  uint32_t chunk_size;
+  string fp_algo;
+  uint32_t dedup_threshold;
 
 public:
   RGWDedupWorker(const DoutPrefixProvider* _dpp,
                  CephContext* _cct,
                  rgw::sal::RadosStore* _store,
                  int _id,
+                 shared_ptr<RGWFPManager> _fpmanager,
                  IoCtx _cold_ioctx)
-    : Worker(_dpp, _cct, _store, _id, _cold_ioctx) {}
+    : Worker(_dpp, _cct, _store, _id, _cold_ioctx), fpmanager(_fpmanager) {}
   RGWDedupWorker(const RGWDedupWorker& rhs) = delete;
   virtual ~RGWDedupWorker() override {}
 
+  struct chunk_t {
+    size_t start = 0;
+    size_t size = 0;
+    string fingerprint = "";
+    bufferlist data;
+  };
+
   virtual void* entry() override;
-  virtual void finalize() override;
 
   void append_obj(target_rados_object new_obj);
   size_t get_num_objs();
   void clear_objs();
+
+  bufferlist read_object_data(IoCtx &ioctx, string object_name);
+  int write_object_data(IoCtx &ioctx, string object_name, bufferlist &data);
+  int check_object_exists(IoCtx& ioctx, string object_name);
+  int try_set_chunk(IoCtx& ioctx, IoCtx &cold_ioctx, string object_name,
+                    chunk_t &chunk);
+  void do_chunk_dedup(IoCtx &ioctx, IoCtx &cold_ioctx, string object_name,
+                      list<chunk_t> redundant_chunks);
+  void do_data_evict(IoCtx &ioctx, string object_name);
+  int clear_manifest(IoCtx &ioctx, string object_name);
+  int remove_object(IoCtx &ioctx, string object_name);
+  vector<ChunkInfoType> do_cdc(bufferlist &data, string chunk_algo,
+                               uint32_t chunk_size);
+  string generate_fingerprint(bufferlist chunk_data, string fp_algo);
 };
 
 struct cold_pool_info_t
@@ -94,7 +126,7 @@ public:
   virtual ~RGWChunkScrubWorker() override {}
   
   virtual void* entry() override;
-  virtual void finalize() override;
+  void finalize();
 
   void append_cold_pool_info(cold_pool_info_t cold_pool_info);
   void clear_chunk_pool_info() {cold_pool_info.clear(); }
