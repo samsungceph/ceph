@@ -24,14 +24,14 @@ void RGWDedup::finalize()
 
 void RGWDedup::start_dedup_manager()
 {
-  assert(dedup_manager.get());
+  ceph_assert(dedup_manager.get());
   dedup_manager->set_down_flag(false);
   dedup_manager->create("dedup_manager");
 }
 
 void RGWDedup::stop_dedup_manager()
 {
-  assert(dedup_manager.get());
+  ceph_assert(dedup_manager.get());
   if (!dedup_manager->get_down_flag()) {
     dedup_manager->stop();
     dedup_manager->join();
@@ -57,4 +57,9 @@ CephContext* RGWDedup::get_cct() const
 std::ostream& RGWDedup::gen_prefix(std::ostream& out) const
 {
   return out << "RGWDedup: ";
+}
+
+void RGWDedup::trace_obj(rgw_obj obj)
+{
+  dedup_manager->trace_obj(obj);
 }

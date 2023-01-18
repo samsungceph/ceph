@@ -19,9 +19,16 @@ const string DEFAULT_COLD_POOL_POSTFIX = "_cold";
 const string DEFAULT_CHUNK_SIZE = "16384";
 const string DEFAULT_CHUNK_ALGO = "fastcdc";
 const string DEFAULT_FP_ALGO = "sha1";
+const uint32_t DEFAULT_HITSET_COUNT = 3;
+const uint32_t DEFAULT_HITSET_PERIOD = 5;
+const uint64_t DEFAULT_HITSET_TARGET_SIZE = 1000;
+const double DEFAULT_HITSET_FPP = 0.05;
 
 void RGWDedupManager::initialize()
 {
+  io_tracker = make_unique<RGWIOTracker>(dpp);
+  io_tracker->initialize();
+
   for (int i = 0; i < num_workers; ++i) {
     dedup_workers.emplace_back(
       make_unique<RGWDedupWorker>(dpp, cct, store, i));
@@ -207,6 +214,11 @@ void RGWDedupManager::finalize()
   }
   dedup_workers.clear();
   scrub_workers.clear();
+
+  if (io_tracker.get()) {
+    io_tracker->finalize();
+    io_tracker.reset();
+  }
 }
 
 int RGWDedupManager::append_ioctxs(rgw_pool base_pool)
@@ -336,9 +348,9 @@ int RGWDedupManager::prepare_dedup_work()
         for (auto obj : results.objs) {
           ldpp_dout(dpp, 10) << "rgw_obj name: " << obj.key.name << dendl;
           RGWObjectCtx obj_ctx(store);
-          unique_ptr<rgw::sal::Object> rgw_obj = bucket->get_object(obj.key);
+          unique_ptr<rgw::sal::Object> rgw_sal_obj = bucket->get_object(obj.key);
           RGWRados::Object op_target(store->getRados(), bucket.get(),
-                                     obj_ctx, rgw_obj.get());
+                                     obj_ctx, rgw_sal_obj.get());
           RGWRados::Object::Stat stat_op(&op_target);
           ret = get_rados_objects(stat_op);
           if (ret < 0) {
@@ -358,6 +370,13 @@ int RGWDedupManager::prepare_dedup_work()
               continue;
             }
 
+            if (!io_tracker->is_hot(manifest.get_obj())) {
+              target_rados_object obj{rados_obj.oid, rados_obj.pool.name};
+              rados_objs.emplace_back(obj);
+              ldpp_dout(dpp, 20) << "  rados_oid name: " << rados_obj.oid
+                << ", pool.name: " << rados_obj.pool.name << dendl;
+            }
+
             string base_pool_name = rados_obj.pool.name;
             if (ioctx_map.find(base_pool_name) == ioctx_map.end()) {
               if (append_ioctxs(rados_obj.pool) < 0) {
@@ -368,7 +387,6 @@ int RGWDedupManager::prepare_dedup_work()
             ++total_obj_cnt;
           }
         }
-
         has_remain_objs = results.is_truncated;
       }
     }
@@ -378,3 +396,8 @@ int RGWDedupManager::prepare_dedup_work()
   return total_obj_cnt;
 }
 
+void RGWDedupManager::trace_obj(rgw_obj obj)
+{
+  ceph_assert(io_tracker.get());
+  io_tracker->insert(obj);
+}

@@ -35,6 +35,8 @@ public:
   CephContext* get_cct() const override;
   unsigned get_subsys() const override;
   std::ostream& gen_prefix(std::ostream& out) const override;
+
+  void trace_obj(rgw_obj obj);
 };
 
 #endif

@@ -491,6 +491,14 @@ public:
     return gc;
   }
 
+  std::shared_ptr<RGWDedup> get_dedup() {
+    return dedup;
+  }
+
+  bool get_use_dedup() {
+    return use_dedup;
+  }
+
   RGWRados& set_run_gc_thread(bool _use_gc_thread) {
     use_gc_thread = _use_gc_thread;
     return *this;
