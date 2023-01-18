@@ -27,6 +27,10 @@ int RGWDedupManager::initialize()
   ceph_assert(dedup_scrub_ratio > 0);
   cold_pool_name = cct->_conf->rgw_dedup_cold_pool_name;
   ceph_assert(!cold_pool_name.empty());
+  fpmanager_memory_limit = cct->_conf->rgw_dedup_fpmanager_memory_limit;
+  ceph_assert(fpmanager_memory_limit > 0);
+  fpmanager_low_watermark = cct->_conf->rgw_dedup_fpmanager_low_watermark;
+  ceph_assert(fpmanager_low_watermark > 0);
 
   rados = store->getRados()->get_rados_handle();
   ceph_assert(rados);
@@ -38,6 +42,11 @@ int RGWDedupManager::initialize()
     ldpp_dout(dpp, 0) << "ERROR: failed to get pool=" << cold_pool_name << dendl;
     return ret;
   }
+
+  // initialize components
+  fpmanager = make_shared<RGWFPManager>(
+    dedup_threshold, fpmanager_memory_limit, fpmanager_low_watermark);
+
   return 0;
 }
 
@@ -72,6 +81,9 @@ void* RGWDedupManager::entry()
   while (!get_down_flag()) {
     if (dedup_worked_cnt < dedup_scrub_ratio) {
       // do dedup
+      ceph_assert(fpmanager.get());
+      fpmanager->reset_fpmap();
+
       update_base_pool_info();
       ++dedup_worked_cnt;
     } else {
@@ -87,6 +99,11 @@ void RGWDedupManager::stop()
 {
   set_down_flag(true);
   ldpp_dout(dpp, 2) << "RGWDedupManager is set to be stopped" << dendl;
+}
+
+void RGWDedupManager::finalize()
+{
+  fpmanager.reset();
 }
 
 int RGWDedupManager::append_ioctxs(rgw_pool base_pool)
