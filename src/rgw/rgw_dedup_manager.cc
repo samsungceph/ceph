@@ -335,12 +335,12 @@ int RGWDedupManager::prepare_dedup_work()
           }
 
           for (auto obj : results.objs) {
-            ldpp_dout(dpp, 10) << "rgw_obj name: " << obj.key.name << dendl;
+            ldpp_dout(dpp, 10) << "rgw::sal::RadosObject name: " << obj.key.name << dendl;
 
             RGWObjectCtx obj_ctx(store);
-            unique_ptr<rgw::sal::Object> rgw_obj = bucket->get_object(obj.key);
+            unique_ptr<rgw::sal::Object> rgw_sal_obj = bucket->get_object(obj.key);
             RGWRados::Object op_target(store->getRados(), bucket.get(),
-                                       obj_ctx, rgw_obj.get());
+                                       obj_ctx, rgw_sal_obj.get());
             RGWRados::Object::Stat stat_op(&op_target);
             ret = get_rados_objects(stat_op);
             if (ret < 0) {
@@ -348,6 +348,7 @@ int RGWDedupManager::prepare_dedup_work()
             }
 
             RGWObjManifest& manifest = *stat_op.result.manifest;
+            rgw_obj rgwobj = manifest.get_obj();
             RGWObjManifest::obj_iterator miter;
             for (miter = manifest.obj_begin(dpp);
                  miter != manifest.obj_end(dpp);
@@ -367,10 +368,12 @@ int RGWDedupManager::prepare_dedup_work()
                 }
               }
               if (!is_exist) {
-                target_rados_object obj{rados_obj.oid, rados_obj.pool.name};
-                rados_objs.emplace_back(obj);
-                ldpp_dout(dpp, 10) << "  rados_oid name: " << rados_obj.oid 
-                                   << ", pool.name: " << rados_obj.pool.name << dendl;
+                if (!io_tracker->estimate_temp(rgwobj)) {
+                  target_rados_object obj{rados_obj.oid, rados_obj.pool.name};
+                  rados_objs.emplace_back(obj);
+                  ldpp_dout(dpp, 10) << "  rados_oid name: " << rados_obj.oid 
+                                    << ", pool.name: " << rados_obj.pool.name << dendl;
+                }
               }
 
               string base_pool_name = rados_obj.pool.name;
