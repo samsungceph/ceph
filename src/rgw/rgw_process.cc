@@ -20,6 +20,7 @@
 #include "rgw_lua_request.h"
 #include "rgw_tracer.h"
 #include "rgw_ratelimit.h"
+#include "rgw_dedup.h"
 
 #include "services/svc_zone_utils.h"
 
@@ -471,6 +472,27 @@ done:
 	  << " latency=" << lat
 	  << " ======"
 	  << dendl;
+
+  auto rados_store = dynamic_cast<rgw::sal::RadosStore*>(store);
+  // if a type of store is not RadosStore, do nothing
+  if (rados_store) {
+    RGWRados* rgw_rados = rados_store->getRados();
+    assert(rgw_rados);
+
+    // use IOTracker if RGW uses dedup
+    if (rgw_rados->get_use_dedup()) {
+      std::shared_ptr<RGWDedup> rgw_dedup(rgw_rados->get_dedup());
+      assert(rgw_dedup.get());
+
+      if (s->op_type == RGW_OP_GET_OBJ || s->op_type == RGW_OP_PUT_OBJ) {
+        rgw_obj rgwobj = s->object->get_obj();
+        ldpp_dout(op, 5) << "insert rgw_obj(" << rgwobj << ") into RGWIOTracker" << dendl;
+        if (rgwobj.bucket.bucket_id != "" && rgwobj.key.name != "") {
+          rgw_dedup->trace_obj(rgwobj);
+        }
+      }
+    }
+  }
 
   return (ret < 0 ? ret : s->err.ret);
 } /* process_request */

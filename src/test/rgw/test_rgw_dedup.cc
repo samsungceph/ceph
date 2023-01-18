@@ -79,7 +79,7 @@ TEST_F(RGWDedupTest, get_worker_id)
 // RGWIOTracker test
 TEST_F(RGWDedupTest, iotracker)
 {
-  IOTracker iotracker(&dp);
+  RGWIOTracker iotracker(&dp);
   iotracker.set_hit_set_count(2);
   iotracker.set_hit_set_period(2);
   iotracker.set_hit_set_target_size(2);
@@ -88,7 +88,6 @@ TEST_F(RGWDedupTest, iotracker)
   string bucket_id = "test_bucket_id";
   rgw_bucket bucket("tenant", "test_bucket", bucket_id);
 
-  }
   rgw_obj obj_01(bucket, "test_obj_01");
   rgw_obj obj_02(bucket, "test_obj_02");
   rgw_obj obj_03(bucket, "test_obj_03");
@@ -113,7 +112,7 @@ TEST_F(RGWDedupTest, iotracker)
 
   // temporal locality test
   iotracker.insert(obj_01);
-  sleep(5);
+  sleep(6);
   EXPECT_EQ(false, iotracker.estimate_temp(obj_01));
 }
 
