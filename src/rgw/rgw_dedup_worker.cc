@@ -7,6 +7,7 @@
 
 #define dout_subsys ceph_subsys_rgw
 
+unsigned default_op_size = 1 << 26;
 
 void Worker::set_run(bool run_status)
 {
@@ -19,11 +20,6 @@ void Worker::stop()
 }
 
 
-string RGWDedupWorker::get_id()
-{
-  return "DedupWorker_" + to_string(id);
-}
-
 void RGWDedupWorker::initialize()
 {
 
@@ -31,6 +27,168 @@ void RGWDedupWorker::initialize()
 
 void* RGWDedupWorker::entry()
 {
+  ldpp_dout(dpp, 20) << "RGWDedupWorker_" << id << " start" << dendl;
+  string chunk_algo = fpmanager->get_chunk_algo();
+  ceph_assert(chunk_algo == "fixed" || chunk_algo == "fastcdc");
+  ssize_t chunk_size = fpmanager->get_chunk_size();
+  ceph_assert(chunk_size > 0);
+  string fp_algo = fpmanager->get_fp_algo();
+  ceph_assert(fp_algo == "sha1" || fp_algo == "sha256" || fp_algo == "sha512");
+
+  map<string, pair<IoCtx, IoCtx>> ioctxs;
+
+  for(auto rados_object : rados_objs) {
+    librados::Rados* rados = store->getRados()->get_rados_handle();
+    IoCtx ioctx;
+    IoCtx cold_ioctx;
+    int ret = 0;
+
+    // get ioctx
+    if (ioctxs.find(rados_object.pool_name) != ioctxs.end()) {
+      ioctx = ioctxs.find(rados_object.pool_name)->second.first;
+      cold_ioctx = ioctxs.find(rados_object.pool_name)->second.second;
+    }
+
+    else {
+      rados->ioctx_create(rados_object.pool_name.c_str(), ioctx);
+      rados->ioctx_create((rados_object.pool_name + DEFAULT_COLD_POOL_POSTFIX).c_str(),
+                            cold_ioctx);
+      ioctxs.insert({rados_object.pool_name, {ioctx, cold_ioctx}});
+    }
+
+    list<chunk_t> redundant_chunks;
+
+    bufferlist data = read_object_data(ioctx, rados_object.object_name);    
+
+    if (data.length() == 0) {
+      ldpp_dout(dpp, 5) << "Skip dedup object "
+        << rados_object.object_name << ", object data size is 0" << dendl;
+      continue;
+    }
+
+    auto chunks = do_cdc(data, chunk_algo, chunk_size);
+
+    // check if a chunk is duplicated in sampled objects
+    for(auto &chunk : chunks) {
+      auto &chunk_data = get<0>(chunk);
+      string fingerprint = generate_fingerprint(chunk_data, fp_algo);
+      
+      if (fpmanager->find(fingerprint)) {
+        std::pair<uint64_t, uint64_t> chunk_boundary = std::get<1>(chunk);
+        chunk_t chunk_info = {
+          .start = chunk_boundary.first,
+          .size = chunk_boundary.second,
+          .fingerprint = fingerprint,
+          .data = chunk_data
+        };
+
+        redundant_chunks.push_back(chunk_info);
+      }
+
+      fpmanager->add(fingerprint);
+    }
+
+    // move data(new <-> chunked <-> entire object) according to policy
+    ret = check_object_exists(cold_ioctx, rados_object.object_name);
+    if (redundant_chunks.size() > 0) {
+      if (ret != -ENOENT) { // entire -> chunked
+        ObjectWriteOperation promote_op;
+        promote_op.tier_promote();
+        ret = ioctx.operate(rados_object.object_name, &promote_op);
+        if (ret < 0) {
+          ldpp_dout(dpp, 1)
+            << "Failed to promote rados object, pool_name: " << rados_object.pool_name
+            << ", oid: " << rados_object.object_name 
+            << ", ret: " << ret << dendl;
+          continue;
+        }
+        
+        ObjectWriteOperation unset_op;
+        unset_op.unset_manifest();
+        ret = ioctx.operate(rados_object.object_name, &unset_op);
+        if (ret < 0) {
+          ldpp_dout(dpp, 1)
+            << "Failed to unset_manifest rados object, pool_name: " << rados_object.pool_name
+            << ", oid: " << rados_object.object_name
+            << ", ret: " << ret << dendl;
+          continue;
+        }
+
+        for (auto chunk : redundant_chunks) {
+          if (check_object_exists(cold_ioctx, chunk.fingerprint) < 0) {
+            ret = write_object_data(cold_ioctx, chunk.fingerprint, chunk.data);
+            if (ret < 0) {
+              ldpp_dout(dpp, 1)
+                << "Failed to write chunk to cold pool, cold_pool_name: "
+                << rados_object.pool_name << DEFAULT_COLD_POOL_POSTFIX
+                << ", fingerprint: " << chunk.fingerprint
+                << ", ret: " << ret << dendl;
+              continue;
+            }
+          }
+          try_set_chunk(ioctx, cold_ioctx, rados_object.object_name, chunk);
+        }
+      } else if (ret == -ENOENT) { // new, chunked -> chunked
+        for (auto chunk : redundant_chunks) {
+          if (check_object_exists(cold_ioctx, chunk.fingerprint) == -ENOENT) {
+            ret = write_object_data(cold_ioctx, chunk.fingerprint, chunk.data);
+            if (ret < 0) {
+              ldpp_dout(dpp, 1)
+                << "Failed to write chunk to cold pool, cold_pool_name: "
+                << rados_object.pool_name << DEFAULT_COLD_POOL_POSTFIX
+                << ", fingerprint: " << chunk.fingerprint
+                << ", ret: " << ret << dendl;
+              continue;
+            }
+          }
+          try_set_chunk(ioctx, cold_ioctx, rados_object.object_name, chunk);
+        }
+      }
+    } else if (redundant_chunks.size() <= 0) { // new, whole -> whole, chunked -> chunked
+      chunk_t chunk = {
+        .start = 0,
+        .size = data.length(),
+        .fingerprint = rados_object.object_name,
+        .data = data
+      };
+
+      if (ret == -ENOENT) { // new -> whole
+        ret = write_object_data(cold_ioctx, rados_object.object_name, data);
+        if (ret < 0) {
+          ldpp_dout(dpp, 1)
+            << "Failed to write entire object to cold pool, cold_pool_name: "
+            << rados_object.pool_name << DEFAULT_COLD_POOL_POSTFIX
+            << ", oid: " << rados_object.object_name 
+            << ", ret: " << ret << dendl;
+          continue;
+        }
+
+        ret = try_set_chunk(ioctx, cold_ioctx, rados_object.object_name, chunk);
+        if (ret == -EOPNOTSUPP) { // chunked -> chunked
+          ret = cold_ioctx.remove(rados_object.object_name);
+          if (ret < 0) {
+            ldpp_dout(dpp, 1)
+                << "Failed to remove entire object in cold pool, cold_pool_name: "
+                << rados_object.pool_name << DEFAULT_COLD_POOL_POSTFIX
+                << ", oid: " << rados_object.object_name 
+                << ", ret: " << ret << dendl;
+            continue;
+          }
+        }
+      }
+    }
+
+    ObjectReadOperation tier_op;
+    tier_op.tier_evict();
+    ret = ioctx.operate(rados_object.object_name, &tier_op, nullptr);
+    if (ret < 0) {
+      ldpp_dout(dpp, 1) << "Failed to tier_evict rados object, pool_name: "
+        << rados_object.pool_name << ", oid: " 
+        << ", ret: " << ret  
+        << rados_object.object_name << dendl;
+      continue;
+    }
+  }
 
   return nullptr;
 }
@@ -38,11 +196,6 @@ void* RGWDedupWorker::entry()
 void RGWDedupWorker::finalize()
 {
 
-}
-
-void RGWDedupWorker::clear_objs()
-{
-  rados_objs.clear();
 }
 
 void RGWDedupWorker::append_obj(target_rados_object new_obj)
@@ -53,6 +206,115 @@ void RGWDedupWorker::append_obj(target_rados_object new_obj)
 size_t RGWDedupWorker::get_num_objs()
 {
   return rados_objs.size();
+}
+
+void RGWDedupWorker::clear_objs()
+{
+  rados_objs.clear();
+}
+
+string RGWDedupWorker::get_id()
+{
+  return "DedupWorker_" + to_string(id);
+}
+
+bufferlist RGWDedupWorker::read_object_data(IoCtx& ioctx, string oid)
+{
+  bufferlist whole_data;
+  size_t offset = 0;
+  int ret = -1;
+
+  while (ret != 0) {
+    bufferlist partial_data;
+    ret = ioctx.read(oid, partial_data, default_op_size, offset);
+    if(ret < 0)
+    {
+      ldpp_dout(dpp, 1) << "read object error " << oid << ", offset: " << offset
+        << ", size: " << default_op_size << ", error:" << cpp_strerror(ret) 
+        << dendl;
+      bufferlist empty_buf;
+      return empty_buf;
+    }
+    offset += ret;
+    whole_data.claim_append(partial_data);
+  }
+
+  return whole_data;
+}
+
+vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> RGWDedupWorker::do_cdc(
+  bufferlist &data, string chunk_algo, ssize_t chunk_size)
+{
+  vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> ret;
+
+  unique_ptr<CDC> cdc = CDC::create(chunk_algo, cbits(chunk_size) - 1);
+  vector<pair<uint64_t, uint64_t>> chunks;
+  cdc->calc_chunks(data, &chunks);
+
+  for (auto &p : chunks) {
+    bufferlist chunk;
+    chunk.substr_of(data, p.first, p.second);
+    ret.push_back(make_tuple(chunk, p));
+  }
+
+  return ret;
+}
+
+string RGWDedupWorker::generate_fingerprint(
+  bufferlist chunk_data, string fp_algo)
+{
+  string ret;
+
+  switch (pg_pool_t::get_fingerprint_from_str(fp_algo)) {
+    case pg_pool_t::TYPE_FINGERPRINT_SHA1:
+      ret = crypto::digest<crypto::SHA1>(chunk_data).to_str();
+      break;
+
+    case pg_pool_t::TYPE_FINGERPRINT_SHA256:
+      ret = crypto::digest<crypto::SHA256>(chunk_data).to_str();
+      break;
+
+    case pg_pool_t::TYPE_FINGERPRINT_SHA512:
+      ret = crypto::digest<crypto::SHA512>(chunk_data).to_str();
+      break;
+
+    default:
+      ceph_assert(0 == "Invalid fp_algo type");
+      break;
+  }
+
+  return ret;
+}
+
+int RGWDedupWorker::check_object_exists(IoCtx& ioctx, string object_name) {
+  uint64_t size;
+  time_t mtime;
+
+  int result = ioctx.stat(object_name, &size, &mtime);
+
+  return result;
+}
+
+int RGWDedupWorker::try_set_chunk(IoCtx& ioctx, IoCtx &cold_ioctx, string object_name, chunk_t &chunk) {
+  ObjectReadOperation chunk_op;
+  chunk_op.set_chunk(
+    chunk.start,
+    chunk.size,
+    cold_ioctx,
+    chunk.fingerprint,
+    0,
+    CEPH_OSD_OP_FLAG_WITH_REFERENCE);
+  int result = ioctx.operate(object_name, &chunk_op, nullptr);
+  
+  return result;
+}
+
+int RGWDedupWorker::write_object_data(IoCtx &ioctx, string object_name, bufferlist &data) {
+  ObjectWriteOperation write_op;
+  write_op.write_full(data);
+  int result = ioctx.operate(object_name, &write_op);
+
+  return result;
 }
 
 
