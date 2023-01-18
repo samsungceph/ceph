@@ -26,7 +26,7 @@ void RGWDedupManager::initialize()
 
   for (int i = 0; i < num_workers; ++i) {
     dedup_workers.emplace_back(
-      make_unique<RGWDedupWorker>(dpp, cct, store, i));
+      make_unique<RGWDedupWorker>(dpp, cct, store, i, fpmanager));
     scrub_workers.emplace_back(
       make_unique<RGWChunkScrubWorker>(dpp, cct, store, i, num_workers));
   }
