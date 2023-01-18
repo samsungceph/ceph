@@ -22,6 +22,8 @@ const string DEFAULT_FP_ALGO = "sha1";
 
 void RGWDedupManager::initialize()
 {
+  fpmanager = make_shared<RGWFPManager>(chunk_algo, stoi(chunk_size), fp_algo);
+
   for (int i = 0; i < num_workers; ++i) {
     dedup_workers.emplace_back(
       make_unique<RGWDedupWorker>(dpp, cct, store, i));
@@ -170,6 +172,7 @@ void* RGWDedupManager::entry()
       // trigger RGWDedupWorkers
       for (auto& worker : dedup_workers) {
         ceph_assert(worker.get());
+        fpmanager->reset_fpmap();
         worker->set_run(true);
         string name = worker->get_id();
         worker->create(name.c_str());

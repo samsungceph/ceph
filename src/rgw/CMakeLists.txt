@@ -175,6 +175,7 @@ set(librgw_common_srcs
   rgw_tracer.cc
   rgw_lua_background.cc
   rgw_dedup.cc
+  rgw_fp_manager.cc
   rgw_dedup_manager.cc
   rgw_dedup_worker.cc)
 
