@@ -6,6 +6,7 @@
 #include "test_rgw_common.h"
 #include "rgw/rgw_dedup_manager.h"
 #include "rgw/rgw_dedup_worker.h"
+#include "rgw/rgw_dedup_iotracker.h"
 #include "rgw/rgw_sal_rados.h"
 #include "common/dout.h"
 
@@ -73,6 +74,47 @@ TEST_F(RGWDedupTest, get_worker_id)
 
   RGWChunkScrubWorker scrubworker(&dp, cct, &store, 1234, 12345);
   EXPECT_EQ("ScrubWorker_1234", scrubworker.get_id());
+}
+
+// RGWIOTracker test
+TEST_F(RGWDedupTest, iotracker)
+{
+  IOTracker iotracker(&dp);
+  iotracker.set_hit_set_count(2);
+  iotracker.set_hit_set_period(2);
+  iotracker.set_hit_set_target_size(2);
+  iotracker.initialize();
+
+  string bucket_id = "test_bucket_id";
+  rgw_bucket bucket("tenant", "test_bucket", bucket_id);
+
+  }
+  rgw_obj obj_01(bucket, "test_obj_01");
+  rgw_obj obj_02(bucket, "test_obj_02");
+  rgw_obj obj_03(bucket, "test_obj_03");
+  rgw_obj obj_04(bucket, "test_obj_04");
+  rgw_obj obj_05(bucket, "test_obj_05");
+
+  EXPECT_EQ(false, iotracker.estimate_temp(rgw_obj()));
+  EXPECT_EQ(false, iotracker.estimate_temp(obj_01));
+
+  // spacial locality test
+  iotracker.insert(obj_01);
+  EXPECT_EQ(true, iotracker.estimate_temp(obj_01));
+  iotracker.insert(obj_02);
+  EXPECT_EQ(true, iotracker.estimate_temp(obj_02));
+  iotracker.insert(obj_03);
+  EXPECT_EQ(true, iotracker.estimate_temp(obj_03));
+  iotracker.insert(obj_04);
+  EXPECT_EQ(true, iotracker.estimate_temp(obj_04));
+  iotracker.insert(obj_05);
+  EXPECT_EQ(true, iotracker.estimate_temp(obj_05));
+  EXPECT_EQ(false, iotracker.estimate_temp(obj_01));
+
+  // temporal locality test
+  iotracker.insert(obj_01);
+  sleep(5);
+  EXPECT_EQ(false, iotracker.estimate_temp(obj_01));
 }
 
 
