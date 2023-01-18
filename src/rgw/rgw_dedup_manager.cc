@@ -31,6 +31,9 @@ int RGWDedupManager::initialize()
   dedup_threshold = cct->_conf->rgw_dedup_threshold;
   dedup_scrub_ratio = cct->_conf->rgw_dedup_scrub_ratio;
 
+  // initialize components
+  fpmanager = make_shared<RGWFPManager>(chunk_algo, chunk_size, fp_algo, dedup_threshold);
+
   for (uint32_t i = 0; i < num_workers; ++i) {
     dedup_workers.emplace_back(
       make_unique<RGWDedupWorker>(dpp, cct, store, i, cold_ioctx));
@@ -122,7 +125,7 @@ int RGWDedupManager::prepare_scrub()
     cold_pool_info.ioctx = cold_ioctx;
     cold_pool_info.num_objs = pool_stat.num_objects;
 
-    for (int i = 0; i < num_workers; ++i) {
+    for (uint32_t i = 0; i < num_workers; ++i) {
       ObjectCursor shard_begin, shard_end;
       cold_ioctx.object_list_slice(pool_begin, pool_end, i, num_workers,
                                    &shard_begin, &shard_end);
@@ -169,6 +172,7 @@ void* RGWDedupManager::entry()
       // trigger RGWDedupWorkers
       for (auto& worker : dedup_workers) {
         ceph_assert(worker.get());
+        fpmanager->reset_fpmap();
         worker->set_run(true);
         string name = "DedupWorker_" + to_string(worker->get_id());
         worker->create(name.c_str());
@@ -219,6 +223,7 @@ void RGWDedupManager::finalize()
     dedup_workers[i].reset();
     scrub_workers[i].reset();
   }
+  fpmanager.reset();
   dedup_workers.clear();
   scrub_workers.clear();
 }
