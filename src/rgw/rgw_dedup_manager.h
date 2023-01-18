@@ -8,10 +8,12 @@
 #include "common/Cond.h"
 #include "common/Thread.h"
 #include "rgw_sal_rados.h"
+#include "rgw_fp_manager.h"
 
 using namespace std;
 using namespace librados;
 
+class RGWFPManager;
 class RGWDedupManager : public Thread
 {
   const DoutPrefixProvider* dpp;
@@ -20,6 +22,8 @@ class RGWDedupManager : public Thread
   bool down_flag;
   Rados* rados;
 
+  shared_ptr<RGWFPManager> fpmanager;
+
   string cold_pool_name;
   string chunk_algo;
   string fp_algo;
@@ -27,6 +31,8 @@ class RGWDedupManager : public Thread
   uint32_t chunk_size;
   uint32_t dedup_threshold;
   uint32_t dedup_scrub_ratio;
+  uint64_t fpmanager_memory_limit;
+  uint32_t fpmanager_low_watermark;
 
 public:
   RGWDedupManager(const DoutPrefixProvider* _dpp,
@@ -41,6 +47,7 @@ public:
 
   void stop();
   int initialize();
+  void finalize();
   void set_down_flag(bool new_flag);
   bool get_down_flag();
 
