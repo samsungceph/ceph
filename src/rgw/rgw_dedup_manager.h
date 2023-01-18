@@ -9,11 +9,13 @@
 #include "common/Thread.h"
 #include "rgw_sal_rados.h"
 #include "rgw_fp_manager.h"
+#include "rgw_dedup_worker.h"
 
 using namespace std;
 using namespace librados;
 
 class RGWFPManager;
+class RGWDedupWorker;
 class RGWDedupManager : public Thread
 {
   const DoutPrefixProvider* dpp;
@@ -23,6 +25,7 @@ class RGWDedupManager : public Thread
   Rados* rados;
 
   shared_ptr<RGWFPManager> fpmanager;
+  vector<unique_ptr<RGWDedupWorker>> dedup_workers;
 
   string cold_pool_name;
   string chunk_algo;
@@ -50,6 +53,12 @@ public:
   void finalize();
   void set_down_flag(bool new_flag);
   bool get_down_flag();
+
+  // WorkerType: RGWDedupWorker or RGWChunkScrubWorker
+  template <typename WorkerType>
+  void run_worker(vector<WorkerType>& workers, string tname_prefix);
+  template <typename WorkerType>
+  void wait_worker(vector<WorkerType>& workers);
 
   int append_ioctxs(rgw_pool base_pool);
   void update_base_pool_info();

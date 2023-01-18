@@ -8,6 +8,7 @@
 #define dout_subsys ceph_subsys_rgw
 
 const int DEDUP_INTERVAL = 3;
+const int MAX_OBJ_SCAN_SIZE = 100;
 
 int RGWDedupManager::initialize()
 {
@@ -46,6 +47,11 @@ int RGWDedupManager::initialize()
   fpmanager = make_shared<RGWFPManager>(
     dedup_threshold, fpmanager_memory_limit, fpmanager_low_watermark);
 
+  for (uint32_t i = 0; i < num_workers; ++i) {
+    dedup_workers.emplace_back(
+      make_unique<RGWDedupWorker>(dpp, cct, store, i, num_workers, fpmanager, chunk_algo,
+                                  chunk_size, fp_algo, dedup_threshold, cold_ioctx));
+  }
   return 0;
 }
 
@@ -73,6 +79,26 @@ void RGWDedupManager::update_base_pool_info()
   }
 }
 
+template <typename WorkerType>
+void RGWDedupManager::run_worker(vector<WorkerType>& workers, string tname_prefix)
+{
+  ceph_assert(!workers.empty());
+  for (auto& worker : workers) {
+    ceph_assert(worker.get());
+    worker->create((tname_prefix + to_string(worker->get_id())).c_str());
+  }
+}
+
+template <typename WorkerType>
+void RGWDedupManager::wait_worker(vector<WorkerType>& workers)
+{
+  ceph_assert(!workers.empty());
+  for (auto& worker : workers) {
+    ceph_assert(worker.get());
+    worker->join();
+  }
+}
+
 void* RGWDedupManager::entry()
 {
   ldpp_dout(dpp, 2) << "RGWDedupManager started" << dendl;
@@ -84,6 +110,8 @@ void* RGWDedupManager::entry()
       fpmanager->reset_fpmap();
 
       update_base_pool_info();
+      run_worker(dedup_workers, "DedupWorker_");
+      wait_worker(dedup_workers);
       ++dedup_worked_cnt;
     } else {
       // do scrub
@@ -102,7 +130,13 @@ void RGWDedupManager::stop()
 
 void RGWDedupManager::finalize()
 {
+  fpmanager->reset_fpmap();
   fpmanager.reset();
+
+  for (uint32_t i = 0; i < num_workers; ++i) {
+    dedup_workers[i]->finalize();
+    dedup_workers[i].reset();
+  }
 }
 
 int RGWDedupManager::append_ioctxs(rgw_pool base_pool)
@@ -113,6 +147,10 @@ int RGWDedupManager::append_ioctxs(rgw_pool base_pool)
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "ERROR: failed to get pool=" << base_pool.name << dendl;
     return ret;
+  }
+
+  for (uint32_t i = 0; i < num_workers; ++i) {
+    dedup_workers[i]->append_base_ioctx(base_ioctx.get_id(), base_ioctx);
   }
   return 0;
 }
