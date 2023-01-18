@@ -18,10 +18,17 @@ const string DEFAULT_COLD_POOL_POSTFIX = "_cold";
 const string DEFAULT_CHUNK_SIZE = "16384";
 const string DEFAULT_CHUNK_ALGO = "fastcdc";
 const string DEFAULT_FP_ALGO = "sha1";
+const uint32_t DEFAULT_HITSET_COUNT = 3;
+const uint32_t DEFAULT_HITSET_PERIOD = 10;
+const uint32_t DEFAULT_HITSET_TARGET_SIZE = 1000;
+const double DEFAULT_HITSET_FPP = 0.05;
 
 
 void RGWDedupManager::initialize()
 {
+  io_tracker = make_unique<RGWIOTracker>(dpp);
+  io_tracker->initialize();
+
   for (int i = 0; i < num_workers; i++) {
     auto dedup_worker = make_unique<RGWDedupWorker>(dpp, cct, store, i);
     dedup_workers.emplace_back(move(dedup_worker));
@@ -201,6 +208,9 @@ void RGWDedupManager::finalize()
   }
   dedup_workers.clear();
   scrub_workers.clear();
+
+  io_tracker->finalize();
+  io_tracker.reset();
 }
 
 librados::IoCtx RGWDedupManager::get_or_create_ioctx(rgw_pool pool)
@@ -389,4 +399,11 @@ int RGWDedupManager::set_sampling_ratio(int new_sampling_ratio)
   }
   sampling_ratio = new_sampling_ratio;
   return 0;
+}
+
+
+void RGWDedupManager::trace_obj(rgw_obj obj)
+{
+  assert(io_tracker.get());
+  io_tracker->insert(obj);
 }

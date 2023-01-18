@@ -51,3 +51,9 @@ unsigned RGWDedup::get_subsys() const
 {
   return dout_subsys;
 }
+
+
+void RGWDedup::trace_obj(rgw_obj obj)
+{
+  dedup_manager->trace_obj(obj);
+}

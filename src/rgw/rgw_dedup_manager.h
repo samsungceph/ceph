@@ -9,6 +9,7 @@
 #include "common/Thread.h"
 #include "rgw_sal_rados.h"
 #include "rgw_dedup_worker.h"
+#include "rgw_dedup_iotracker.h"
 
 using namespace std;
 using namespace librados;
@@ -38,6 +39,7 @@ class RGWDedupManager : public Thread
 
   vector<unique_ptr<RGWDedupWorker>> dedup_workers;
   vector<unique_ptr<RGWChunkScrubWorker>> scrub_workers;
+  unique_ptr<RGWIOTracker> io_tracker;
 
   string cold_pool_postfix;
   string chunk_size;
@@ -96,6 +98,8 @@ public:
   void append_rados_obj(target_rados_object new_obj) { rados_objs.emplace_back(new_obj); }
   size_t get_num_rados_obj() { return rados_objs.size(); }
   int prepare_scrub_work();
+
+  void trace_obj(rgw_obj obj);
 };
 
 #endif
