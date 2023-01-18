@@ -31,6 +31,9 @@ int RGWDedupManager::initialize()
   dedup_threshold = cct->_conf->rgw_dedup_threshold;
   dedup_scrub_ratio = cct->_conf->rgw_dedup_scrub_ratio;
 
+  // initialize components
+  fpmanager = make_shared<RGWFPManager>(chunk_algo, chunk_size, fp_algo, dedup_threshold);
+
   for (int i = 0; i < num_workers; ++i) {
     dedup_workers.emplace_back(
       make_unique<RGWDedupWorker>(dpp, cct, store, i, cold_ioctx));
@@ -169,6 +172,7 @@ void* RGWDedupManager::entry()
       // trigger RGWDedupWorkers
       for (auto& worker : dedup_workers) {
         ceph_assert(worker.get());
+        fpmanager->reset_fpmap();
         worker->set_run(true);
         string name = "DedupWorker_" + to_string(worker->get_id());
         worker->create(name.c_str());
@@ -219,6 +223,7 @@ void RGWDedupManager::finalize()
     dedup_workers[i].reset();
     scrub_workers[i].reset();
   }
+  fpmanager.reset();
   dedup_workers.clear();
   scrub_workers.clear();
 }

@@ -8,6 +8,7 @@
 #include "common/Cond.h"
 #include "common/Thread.h"
 #include "rgw_sal_rados.h"
+#include "rgw_fp_manager.h"
 #include "rgw_dedup_worker.h"
 
 using namespace std;
@@ -20,8 +21,10 @@ struct target_rados_object {
   string pool_name;
 };
 
+class RGWFPManager;
 class RGWDedupWorker;
 class RGWChunkScrubWorker;
+
 class RGWDedupManager : public Thread
 {
   const DoutPrefixProvider* dpp;
@@ -30,6 +33,7 @@ class RGWDedupManager : public Thread
   bool down_flag;
   vector<target_rados_object> rados_objs;
 
+  shared_ptr<RGWFPManager> fpmanager;
   vector<unique_ptr<RGWDedupWorker>> dedup_workers;
   vector<unique_ptr<RGWChunkScrubWorker>> scrub_workers;
 
