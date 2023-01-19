@@ -1193,6 +1193,8 @@ protected:
       write_ordered,
       obc);
   }
+  bool need_skip_handling_manifest(const OpRequestRef& op_req,
+                                   const bool is_chunked);
 
   /**
    * This helper function is called from do_op if the ObjectContext lookup fails.
