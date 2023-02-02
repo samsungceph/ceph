@@ -18,6 +18,7 @@ void RGWDedup::initialize(CephContext* _cct, rgw::sal::RadosStore* _store)
 
 void RGWDedup::finalize()
 {
+  stop_dedup_manager();
   dedup_manager.reset();
 }
 
@@ -30,7 +31,8 @@ void RGWDedup::start_dedup_manager()
 
 void RGWDedup::stop_dedup_manager()
 {
-  if (!dedup_manager->get_down_flag() && dedup_manager.get()) {
+  assert(dedup_manager.get());
+  if (!dedup_manager->get_down_flag()) {
     dedup_manager->stop();
     dedup_manager->join();
     dedup_manager->finalize();
@@ -39,11 +41,6 @@ void RGWDedup::stop_dedup_manager()
 
 RGWDedup::~RGWDedup()
 {
-  if (dedup_manager.get()) {
-    stop_dedup_manager();
-  }
-  finalize();
-  
   ldpp_dout(this, 2) << "stop RGWDedup done" << dendl;
 }
 

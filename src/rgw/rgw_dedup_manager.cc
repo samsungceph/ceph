@@ -75,8 +75,7 @@ void RGWDedupManager::hand_out_objects(vector<size_t> sampled_indexes)
         continue;
       }
       ++it;
-    }
-    else if ((*it)->get_num_objs() > num_objs_per_worker) {
+    } else if ((*it)->get_num_objs() > num_objs_per_worker) {
       ++it;
     }
   }
@@ -89,7 +88,6 @@ struct cold_pool_info_t;
  */
 int RGWDedupManager::prepare_scrub_work()
 {
-  int ret = 0;
   Rados* rados = store->getRados()->get_rados_handle();
   cold_pool_info_t cold_pool_info;
   list<string> cold_pool_names;
@@ -102,7 +100,7 @@ int RGWDedupManager::prepare_scrub_work()
     cold_to_base[cold_pool_name] = base_pool_name;
   }
 
-  ret = rados->get_pool_stats(cold_pool_names, cold_pool_stats);
+  int ret = rados->get_pool_stats(cold_pool_names, cold_pool_stats);
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "error fetching pool stats: " << cpp_strerror(ret) << dendl;
     return ret;
@@ -139,14 +137,19 @@ int RGWDedupManager::prepare_scrub_work()
 
 void* RGWDedupManager::entry()
 {
+  assert(fpmanager.get());
+
   ldpp_dout(dpp, 2) << "RGWDedupManager started" << dendl;
 
   while (!get_down_flag()) {
-    int ret = 0;
     if (dedup_worked_cnt < dedup_scrub_ratio) {
       ldpp_dout(dpp, 2) << "RGWDedupWorkers start" << dendl;
 
-      assert(prepare_dedup_work() >= 0);
+      int ret = prepare_dedup_work();
+      if (ret < 0) {
+        ldpp_dout(dpp, 0) << "prepare_dedup_work() failed" << dendl;
+        return nullptr;
+      }
       if (ret == 0 && get_num_rados_obj() == 0) {
         ldpp_dout(dpp, 2) << "not a single rados object has been found. do retry" << dendl;
         sleep(60);
@@ -158,6 +161,7 @@ void* RGWDedupManager::entry()
 
       // trigger RGWDedupWorkers
       for (auto& worker : dedup_workers) {
+  assert(worker.get());
   fpmanager->reset_fpmap();
 	worker->set_run(true);
 	string name = worker->get_id();
@@ -169,11 +173,11 @@ void* RGWDedupManager::entry()
 	worker->join();
       }
       ++dedup_worked_cnt;
-    }
-    else {
+    } else {
       ldpp_dout(dpp, 2) << "RGWChunkScrubWorkers start" << dendl;
 
       for (auto& worker : scrub_workers) {
+  assert(worker.get());
 	worker->clear_chunk_pool_info();
       }
       prepare_scrub_work();
@@ -213,8 +217,10 @@ void RGWDedupManager::finalize()
   dedup_workers.clear();
   scrub_workers.clear();
 
-  io_tracker->finalize();
-  io_tracker.reset();
+  if (io_tracker.get()) {
+    io_tracker->finalize();
+    io_tracker.reset();
+  }
 }
 
 librados::IoCtx RGWDedupManager::get_or_create_ioctx(rgw_pool pool)
@@ -237,40 +243,33 @@ void RGWDedupManager::append_ioctxs(rgw_pool base_pool)
   ioctx_map.insert({base_pool_name, pool_set});
 }
 
+int RGWDedupManager::mon_command(string prefix, string pool, string var, string val)
+{
+  librados::Rados* rados = store->getRados()->get_rados_handle();
+  return rados->mon_command(
+    "{\"prefix\": \"" + prefix + "\", \"pool\": \"" + pool + "\", \"var\": \"" 
+    + var + "\", \"val\"" + val + "\"}", {}, nullptr, nullptr);
+}
+
 void RGWDedupManager::set_dedup_tier(string base_pool_name)
 {
   string cold_pool_name = ioctx_map[base_pool_name].cold_pool_ctx.get_pool_name();
-  librados::Rados* rados = store->getRados()->get_rados_handle();
-  bufferlist inbl;
-  int ret = rados->mon_command(
-    "{\"prefix\": \"osd pool set\", \"pool\": \"" + base_pool_name
-    + "\",\"var\": \"dedup_tier\", \"val\": \"" + cold_pool_name
-    + "\"}", inbl, nullptr, nullptr);
+  int ret = mon_command("osd pool set", base_pool_name, "dedup_tier", cold_pool_name);
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "ERROR: failed to set dedup_tier" << dendl;
   }
 
-  ret = rados->mon_command(
-    "{\"prefix\": \"osd pool set\", \"pool\": \"" + base_pool_name
-    + "\",\"var\": \"dedup_chunk_algorithm\", \"val\": \"" + chunk_algo
-    + "\"}", inbl, nullptr, nullptr);
+  ret = mon_command("osd pool set", base_pool_name, "dedup_chunk_algorithm", chunk_algo);
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "ERROR: failed to set dedup_chunk_algorithm" << dendl;
   }
 
-  ret = rados->mon_command(
-    "{\"prefix\": \"osd pool set\", \"pool\": \"" + base_pool_name
-    + "\",\"var\": \"dedup_cdc_chunk_size\", \"val\": \"" + chunk_size
-    + "\"}", inbl, nullptr, nullptr);
+  ret = mon_command("osd pool set", base_pool_name, "dedup_cdc_chunk_size", chunk_size);
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "ERROR: failed to set dedup_cdc_chunk_size" << dendl;
   }
 
-  ret = rados->mon_command(
-    "{\"prefix\": \"osd pool set\", \"pool\": \"" + base_pool_name
-    + "\",\"var\": \"fingerprint_algorithm\", \"val\": \"" + fp_algo
-    + "\"}", inbl, nullptr, nullptr);
-
+  ret = mon_command("osd pool set", base_pool_name, "fingerprint_algorithm", fp_algo);
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "ERROR: failed to set fingerprint_algorithm" << dendl;
   }
@@ -278,8 +277,8 @@ void RGWDedupManager::set_dedup_tier(string base_pool_name)
 
 int RGWDedupManager::get_rados_objects(RGWRados::Object::Stat& stat_op)
 {
-  int ret = 0;
-  ret = stat_op.stat_async(dpp);
+  // TODO: change stat_async to sync if possible
+  int ret = stat_op.stat_async(dpp);
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "ERROR: stat_async() returned error: " <<
       cpp_strerror(-ret) << dendl;
@@ -299,7 +298,7 @@ int RGWDedupManager::get_rados_objects(RGWRados::Object::Stat& stat_op)
 int RGWDedupManager::prepare_dedup_work()
 {
   void* handle = nullptr;
-  bool bucket_trunc = true;
+  bool is_last_bucket = false;
   int ret = 0;
   int total_obj_cnt = 0;
 
@@ -309,32 +308,34 @@ int RGWDedupManager::prepare_dedup_work()
       return ret;
   }
 
-  while (bucket_trunc) {
+  while (!is_last_bucket) {
     list<string> bucket_list;
     ret = store->meta_list_keys_next(dpp, handle, MAX_BUCKET_SCAN_SIZE,
-                                     bucket_list, &bucket_trunc);
+                                     bucket_list, &is_last_bucket);
     if (ret < 0) {
       ldpp_dout(dpp, 0) << "ERROR: meta_list_keys_netx() failed" << dendl;
+      store->meta_list_keys_complete(handle);
       return ret;
-    }
-    else {
+    } else {
       for (auto bucket_name : bucket_list) {
         unique_ptr<rgw::sal::Bucket> bucket;
         ret = store->get_bucket(dpp, nullptr, "", bucket_name, &bucket, null_yield);
         if (ret < 0) {
           ldpp_dout(dpp, 0) << "ERROR: get_bucket() failed" << dendl;
+          store->meta_list_keys_complete(handle);
           return ret;
         }
 
         rgw::sal::Bucket::ListParams params;
         rgw::sal::Bucket::ListResults results;
-        bool obj_trunc = true;
+        bool is_last_obj = true;
         const string bucket_id = bucket->get_key().get_key();
 
-        while (obj_trunc) {
+        while (!is_last_obj) {
           ret = bucket->list(dpp, params, MAX_OBJ_SCAN_SIZE, results, null_yield);
           if (ret < 0) {
             ldpp_dout(dpp, 0) << "ERROR: list() failed" << dendl;
+            store->meta_list_keys_complete(handle);
             return ret;
           }
 
@@ -348,6 +349,7 @@ int RGWDedupManager::prepare_dedup_work()
             RGWRados::Object::Stat stat_op(&op_target);
             ret = get_rados_objects(stat_op);
             if (ret < 0) {
+              store->meta_list_keys_complete(handle);
               return ret;
             }
 
@@ -357,9 +359,11 @@ int RGWDedupManager::prepare_dedup_work()
             for (miter = manifest.obj_begin(dpp);
                  miter != manifest.obj_end(dpp);
                  ++miter) {
-              const rgw_raw_obj& rados_obj
-                = miter.get_location()
-                       .get_raw_obj(static_cast<rgw::sal::RadosStore*>(store));
+              const rgw_raw_obj& rados_obj 
+                = miter.get_location().get_raw_obj(static_cast<rgw::sal::RadosStore*>(store));
+              if (rados_obj == rgw_raw_obj()) {
+                continue;
+              }
 
               // do not allow duplicated objects in rados_objs
               bool is_exist = false;
@@ -376,7 +380,7 @@ int RGWDedupManager::prepare_dedup_work()
                   target_rados_object obj{rados_obj.oid, rados_obj.pool.name};
                   rados_objs.emplace_back(obj);
                   ldpp_dout(dpp, 10) << "  rados_oid name: " << rados_obj.oid 
-                                    << ", pool.name: " << rados_obj.pool.name << dendl;
+                                     << ", pool.name: " << rados_obj.pool.name << dendl;
                 }
               }
 
@@ -388,7 +392,7 @@ int RGWDedupManager::prepare_dedup_work()
             }
           }
 
-          obj_trunc = results.is_truncated;
+          is_last_obj = results.is_truncated;
           total_obj_cnt += results.objs.size();
         }
       }

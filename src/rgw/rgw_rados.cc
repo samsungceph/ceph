@@ -1115,6 +1115,7 @@ void RGWRados::finalize()
 
   if (use_dedup) {
     if (dedup.get()) {
+      dedup->finalize();
       dedup.reset();
     }
   }

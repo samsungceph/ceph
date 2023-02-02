@@ -89,20 +89,26 @@ public:
   void set_down_flag(bool new_flag) { down_flag = new_flag; }
   bool get_down_flag() { return down_flag; }
 
+  int set_sampling_ratio(int new_sampling_ratio);
+  void append_rados_obj(target_rados_object new_obj) { rados_objs.emplace_back(new_obj); }
+  size_t get_num_rados_obj() { return rados_objs.size(); }
+  int mon_command(string prefix, string pool, string var, string val);
   void set_dedup_tier(string base_pool_name);
-  int prepare_dedup_work();
   IoCtx get_or_create_ioctx(rgw_pool pool);
   void append_ioctxs(rgw_pool base_pool);
   int get_rados_objects(RGWRados::Object::Stat& stat_op);
   vector<size_t> sample_rados_objects();
-  void hand_out_objects(vector<size_t> sampled_indexes);
 
-  int set_num_workers(int new_num_workers);
-  int set_sampling_ratio(int new_sampling_ratio);
-  void append_rados_obj(target_rados_object new_obj) { rados_objs.emplace_back(new_obj); }
-  size_t get_num_rados_obj() { return rados_objs.size(); }
+  // distribute aggregated rados objects evenly to each RGWDedupWorker
+  void hand_out_objects(vector<size_t> sampled_indexes);
+  
+  // get all rados objects to deduplicate
+  int prepare_dedup_work();
+
+  // get all chunk objects to scrub
   int prepare_scrub_work();
 
+  // insert append rgw object to IOTracker
   void trace_obj(rgw_obj obj);
 };
 

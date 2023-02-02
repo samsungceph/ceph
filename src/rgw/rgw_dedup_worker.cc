@@ -47,9 +47,7 @@ void* RGWDedupWorker::entry()
     if (ioctxs.find(rados_object.pool_name) != ioctxs.end()) {
       ioctx = ioctxs.find(rados_object.pool_name)->second.first;
       cold_ioctx = ioctxs.find(rados_object.pool_name)->second.second;
-    }
-
-    else {
+    } else {
       rados->ioctx_create(rados_object.pool_name.c_str(), ioctx);
       rados->ioctx_create((rados_object.pool_name + DEFAULT_COLD_POOL_POSTFIX).c_str(),
                             cold_ioctx);
@@ -412,8 +410,7 @@ void* RGWChunkScrubWorker::entry()
             ldpp_dout(dpp, 0) << cold_oid << " reference " << src_obj
 	      << ": referencing pool does not exist" << dendl;
             src_ref_cnt = 0;
-          }
-          else {
+          } else {
             // get reference count that src object is pointing a chunk object
             src_ref_cnt = cls_cas_references_chunk(src_ioctx, src_obj.oid.name, cold_oid);
             if (src_ref_cnt < 0) {
@@ -421,13 +418,11 @@ void* RGWChunkScrubWorker::entry()
                 ldpp_dout(dpp, 2) << "chunk (" << cold_oid << ") is referencing " << src_obj
                   << ": referencing object missing" << dendl;
                 src_ref_cnt = 0;
-              }
-              else if (src_ref_cnt == -ENOLINK) {
+              } else if (src_ref_cnt == -ENOLINK) {
                 ldpp_dout(dpp, 2) << "chunk (" << cold_oid << ") is referencing " << src_obj
                   << ": referencing object does not reference this chunk" << dendl;
                 src_ref_cnt = 0;
-              }
-              else {
+              } else {
                 ldpp_dout(dpp, 2) << "cls_cas_references_chunk() fail: "
                   << strerror(src_ref_cnt) << dendl;
 		continue;

@@ -112,10 +112,12 @@ public:
 
   virtual string get_id() override;
   void append_cold_pool_info(cold_pool_info_t cold_pool_info);
-  void clear_chunk_pool_info() {cold_pool_info.clear(); }
+  void clear_chunk_pool_info() { cold_pool_info.clear(); }
+
+  // fix mismatched chunk reference
   int do_chunk_repair(IoCtx& cold_ioctx, const string chunk_obj_name,
-		      const hobject_t src_obj, int chunk_ref_cnt,
-		      int src_ref_cnt);
+                      const hobject_t src_obj, int chunk_ref_cnt,
+                      int src_ref_cnt);
 };
 
 #endif
