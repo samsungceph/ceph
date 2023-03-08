@@ -173,7 +173,12 @@ set(librgw_common_srcs
   rgw_lua_data_filter.cc
   rgw_bucket_encryption.cc
   rgw_tracer.cc
-  rgw_lua_background.cc)
+  rgw_lua_background.cc
+  rgw_dedup.cc
+  rgw_fp_manager.cc
+  rgw_dedup_manager.cc
+  rgw_dedup_worker.cc
+  rgw_dedup_iotracker.cc)
 
 list(APPEND librgw_common_srcs
   store/immutable_config/store.cc
@@ -230,6 +235,8 @@ target_link_libraries(rgw_common
     cls_timeindex_client
     cls_user_client
     cls_version_client
+    cls_cas_client
+    cls_cas_internal
     librados
     rt
     fmt::fmt

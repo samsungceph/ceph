@@ -4361,7 +4361,6 @@ int main(int argc, const char **argv)
     bool need_gc = (gc_ops_list.find(opt_cmd) != gc_ops_list.end()) && !bypass_gc;
 
     StoreManager::Config cfg = StoreManager::get_config(true, g_ceph_context);
-
     auto config_store_type = g_conf().get_val<std::string>("rgw_config_store");
     cfgstore = StoreManager::create_config_store(dpp(), config_store_type);
     if (!cfgstore) {
@@ -4382,6 +4381,7 @@ int main(int argc, const char **argv)
 					false,
 					false,
 					false,
+                                        false,
 					need_cache && g_conf()->rgw_cache_enabled,
 					need_gc);
     }

@@ -70,6 +70,8 @@ public:
     virtual void dump(ceph::Formatter *f) const = 0;
     virtual Impl* clone() const = 0;
     virtual void seal() {}
+    virtual void insert_string(const std::string& o) {}
+    virtual bool contains_string(const std::string& o) const { return false; }
     virtual ~Impl() {}
   };
 
@@ -146,6 +148,15 @@ public:
   /// query whether a hash is in the set
   bool contains(const hobject_t& o) const {
     return impl->contains(o);
+  }
+
+  /// insert a hash of string into to set
+  void insert_string(const std::string& o) {
+    impl->insert_string(o);
+  }
+  /// query whether a string value is in the set
+  bool contains_string(const std::string& o) const {
+    return impl->contains_string(o);
   }
 
   unsigned insert_count() const {
@@ -417,6 +428,12 @@ public:
   }
   bool contains(const hobject_t& o) const override {
     return bloom.contains(o.get_hash());
+  }
+  void insert_string(const std::string& o) override {
+    bloom.insert(o);
+  }
+  bool contains_string(const std::string& o) const override {
+    return bloom.contains(o);
   }
   unsigned insert_count() const override {
     return bloom.element_count();

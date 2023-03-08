@@ -83,7 +83,7 @@ int main(const int argc, const char **argv)
   StoreManager::Config cfg;
   cfg.store_name = "rados";
   cfg.filter_name = "none";
-  store = StoreManager::get_storage(&dp, g_ceph_context, cfg, false, false, false, false, false);
+  store = StoreManager::get_storage(&dp, g_ceph_context, cfg, false, false, false, false, false, false);
   if (!store) {
     std::cerr << "couldn't init storage provider" << std::endl;
     return EIO;

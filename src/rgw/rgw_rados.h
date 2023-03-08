@@ -57,6 +57,8 @@ struct RGWZoneGroup;
 struct RGWZoneParams;
 class RGWReshard;
 class RGWReshardWait;
+class RGWDedup;
+class RGWDedupManager;
 
 struct get_obj_data;
 
@@ -342,7 +344,7 @@ class RGWRados
   friend class rgw::sal::MPRadosSerializer;
   friend class rgw::sal::LCRadosSerializer;
   friend class rgw::sal::RadosStore;
-
+  
   /** Open the pool used as root for this gateway */
   int open_root_pool_ctx(const DoutPrefixProvider *dpp);
   int open_gc_pool_ctx(const DoutPrefixProvider *dpp);
@@ -362,11 +364,13 @@ class RGWRados
   RGWGC *gc = nullptr;
   RGWLC *lc;
   RGWObjectExpirer *obj_expirer;
+  std::shared_ptr<RGWDedup> dedup;
   bool use_gc_thread;
   bool use_lc_thread;
   bool quota_threads;
   bool run_sync_thread;
   bool run_reshard_thread;
+  bool use_dedup;
 
   RGWMetaNotifier *meta_notifier;
   RGWDataNotifier *data_notifier;
@@ -488,6 +492,14 @@ public:
     return gc;
   }
 
+  std::shared_ptr<RGWDedup> get_dedup() {
+    return dedup;
+  }
+
+  bool get_use_dedup() {
+    return use_dedup;
+  }
+
   RGWRados& set_run_gc_thread(bool _use_gc_thread) {
     use_gc_thread = _use_gc_thread;
     return *this;
@@ -510,6 +522,11 @@ public:
 
   RGWRados& set_run_reshard_thread(bool _run_reshard_thread) {
     run_reshard_thread = _run_reshard_thread;
+    return *this;
+  }
+
+  RGWRados& set_use_dedup(bool _use_dedup) {
+    use_dedup = _use_dedup;
     return *this;
   }
 
