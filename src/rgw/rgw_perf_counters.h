@@ -29,6 +29,23 @@ enum {
   l_rgw_cache_hit,
   l_rgw_cache_miss,
 
+  l_rgw_dedup_original_data_size,
+  l_rgw_dedup_archived_data_size,
+  l_rgw_dedup_chunk_data_size,
+  l_rgw_dedup_deduped_data_size,
+  l_rgw_dedup_current_worker_mode,
+  l_rgw_dedup_worker_read,
+  l_rgw_dedup_worker_write,
+  l_rgw_dedup_worker_count,
+  l_rgw_dedup_scrub_ratio,
+  l_rgw_dedup_chunk_algo,
+  l_rgw_dedup_chunk_size,
+  l_rgw_dedup_fp_algo,
+  l_rgw_dedup_hitset_count,
+  l_rgw_dedup_hitset_period,
+  l_rgw_dedup_hitset_target_size,
+  l_rgw_dedup_hitset_fpp,
+
   l_rgw_keystone_token_cache_hit,
   l_rgw_keystone_token_cache_miss,
 

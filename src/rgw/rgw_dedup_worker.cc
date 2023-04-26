@@ -216,6 +216,10 @@ bufferlist RGWDedupWorker::read_object_data(IoCtx& ioctx, string object_name)
     offset += ret;
     whole_data.claim_append(partial_data);
   }
+
+  if (perfcounter) {
+    perfcounter->inc(l_rgw_dedup_worker_read, whole_data.length());
+  }
   return whole_data;
 }
 
@@ -228,6 +232,10 @@ int RGWDedupWorker::write_object_data(IoCtx &ioctx, string object_name, bufferli
     ldpp_dout(dpp, 1)
       << "Failed to write rados object, pool_name: "<< ioctx.get_pool_name()
       << ", object_name: " << object_name << ", ret: " << ret << dendl;
+  }
+
+  if (perfcounter) {
+    perfcounter->inc(l_rgw_dedup_worker_write, data.length());
   }
   return ret;
 }
@@ -269,6 +277,9 @@ void RGWDedupWorker::do_chunk_dedup(IoCtx& ioctx, IoCtx& cold_ioctx,
           << ", ret: " << ret << dendl;
         return;
       }
+      if (perfcounter) {
+        perfcounter->inc(l_rgw_dedup_chunk_data_size, chunk.data.length());
+      }
     } else {
       if (chunk_map.find(chunk.start) != chunk_map.end() &&
           chunk_map[chunk.start].length == chunk.size &&
@@ -279,7 +290,11 @@ void RGWDedupWorker::do_chunk_dedup(IoCtx& ioctx, IoCtx& cold_ioctx,
         continue;
       }
     }
-    try_set_chunk(ioctx, cold_ioctx, object_name, chunk);
+
+    if (try_set_chunk(ioctx, cold_ioctx, object_name, chunk) >= 0
+        && perfcounter) {
+      perfcounter->inc(l_rgw_dedup_deduped_data_size, chunk.data.length());
+    }
   }
 }
 
