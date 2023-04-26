@@ -3999,6 +3999,23 @@ void Monitor::handle_command(MonOpRequestRef op)
     f->flush(rdata);
     rs = "";
     r = 0;
+  } else if (prefix == "get-service") {
+    string service;
+    if (!cmd_getval(cmdmap, "service", service)) {
+      r = -EINVAL;
+      rs = "must specify a service name";
+      goto out;
+    }
+
+    dout(0) << __func__ << " get-service service: " << service << dendl;
+    auto services = mgrstatmon()->get_service_map().services;
+
+    dout(0) << __func__ << " summary: " << services[service].get_summary() << dendl;
+    services[service].encode(rdata, CEPH_FEATURES_ALL);
+    dout(0) << __func__ << " rdata: " << rdata << dendl;
+    //rdata.append(services[service]);
+    r = 0;
+    rs = "";
   }
 
  out:

@@ -15,7 +15,7 @@
 using namespace std;
 using namespace librados;
 
-extern const string DEFAULT_COLD_POOL_POSTFIX;
+extern const string DEFAULT_COLD_POOL_NAME;
 extern const string DEFAULT_CHUNK_SIZE;
 extern const string DEFAULT_CHUNK_ALGO;
 extern const string DEFAULT_FP_ALGO;
@@ -43,7 +43,7 @@ class RGWDedupManager : public Thread
   vector<unique_ptr<RGWDedupWorker>> dedup_workers;
   vector<unique_ptr<RGWChunkScrubWorker>> scrub_workers;
 
-  string cold_pool_postfix;
+  string cold_pool_name;
   string chunk_size;
   string chunk_algo;
   string fp_algo;
@@ -68,7 +68,7 @@ public:
                  CephContext* _cct,
                  rgw::sal::RadosStore* _store)
     : dpp(_dpp), cct(_cct), store(_store), down_flag(true),
-      cold_pool_postfix(DEFAULT_COLD_POOL_POSTFIX),
+      cold_pool_name(DEFAULT_COLD_POOL_NAME),
       chunk_size(DEFAULT_CHUNK_SIZE),
       chunk_algo(DEFAULT_CHUNK_ALGO),
       fp_algo(DEFAULT_FP_ALGO),
@@ -82,13 +82,12 @@ public:
   void stop();
   void finalize();
   bool going_down();
-  void initialize();
+  int initialize();
   void set_down_flag(bool new_flag) { down_flag = new_flag; }
   bool get_down_flag() { return down_flag; }
   size_t get_num_rados_obj() { return rados_objs.size(); }
   void set_dedup_tier(string base_pool_name);
   int append_ioctxs(rgw_pool base_pool);
-  int get_rados_objects(RGWRados::Object::Stat& stat_op);
 
   // add rados obj to Worker referring to objs_per_worker and update remain_objs
   int append_rados_obj(vector<unique_ptr<RGWDedupWorker>>::iterator& witer,
@@ -101,15 +100,16 @@ public:
   // processed in an early stage can not be deduped because of insufficient fp info
   void hand_out_objects();
 
-  // get all rados objects to deduplicate
-  int prepare_dedup();
-
-  // get all chunk objects to scrub
-  int prepare_scrub();
+  // assign each worker's id
+  void prepare_dedup(const int rgwdedup_cnt, const int cur_rgwdedup_id);
+  void prepare_scrub(const int rgwdedup_cnt, const int cur_rgwdedup_id);
 
   string create_mon_cmd(const string& prefix, const vector<pair<string, string>>& options);
   string create_osd_pool_set_cmd(const string prefix, const string base_pool,
                                  const string var, const string val);
+
+  int get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id);
+  void update_base_pool_info();
 };
 
 #endif

@@ -26,7 +26,7 @@ public:
   RGWDedup() : cct(nullptr), store(nullptr) {}
   ~RGWDedup() override;
 
-  void initialize(CephContext* _cct, rgw::sal::RadosStore* _store);
+  int initialize(CephContext* _cct, rgw::sal::RadosStore* _store);
   void finalize();
 
   void start_dedup_manager();

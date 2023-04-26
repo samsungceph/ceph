@@ -3,6 +3,8 @@
 
 #include "rgw_dedup_worker.h"
 #include "cls/cas/cls_cas_client.h"
+#include "rgw_zone.h"
+#include "services/svc_zone.h"
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -18,45 +20,41 @@ void Worker::stop()
   is_run = false;
 }
 
-
-void* RGWDedupWorker::entry()
+int Worker::get_id()
 {
-  ldpp_dout(dpp, 20) << "RGWDedupWorker_" << id << " starts" << dendl;
-  string chunk_algo = fpmanager->get_chunk_algo();
-  ceph_assert(chunk_algo == "fixed" || chunk_algo == "fastcdc");
-  ssize_t chunk_size = fpmanager->get_chunk_size();
-  ceph_assert(chunk_size > 0);
-  string fp_algo = fpmanager->get_fp_algo();
-  ceph_assert(fp_algo == "sha1" || fp_algo == "sha256" || fp_algo == "sha512");
+  return id;
+}
 
-  map<string, pair<IoCtx, IoCtx>> ioctxs;
+void Worker::prepare(const int new_total_workers, const int new_gid)
+{
+  num_total_workers = new_total_workers;
+  gid = new_gid;
+}
 
-  for(auto rados_object : rados_objs) {
-    librados::Rados* rados = store->getRados()->get_rados_handle();
-    IoCtx ioctx;
-    IoCtx cold_ioctx;
+void Worker::clear_base_ioctx_map()
+{
+  base_ioctx_map.clear();
+}
 
-    // get ioctx
-    if (ioctxs.find(rados_object.pool_name) != ioctxs.end()) {
-      ioctx = ioctxs.find(rados_object.pool_name)->second.first;
-      cold_ioctx = ioctxs.find(rados_object.pool_name)->second.second;
-    } else {
-      rados->ioctx_create(rados_object.pool_name.c_str(), ioctx);
-      rados->ioctx_create((rados_object.pool_name + DEFAULT_COLD_POOL_POSTFIX).c_str(),
-                            cold_ioctx);
-      ioctxs.insert({rados_object.pool_name, {ioctx, cold_ioctx}});
-    }
+void Worker::append_base_ioctx(uint64_t id, IoCtx& ioctx)
+{
+  base_ioctx_map.emplace(id, ioctx);
+}
 
+
+template <typename Iter>
+void RGWDedupWorker::try_object_dedup(IoCtx& base_ioctx, Iter begin, Iter end)
+{
+  for (auto& obj = begin; obj != end; ++obj) {
     list<chunk_t> redundant_chunks;
-
-    bufferlist data = read_object_data(ioctx, rados_object.object_name);    
-
+    auto target_oid = obj->oid;
+    ldpp_dout(dpp, 0) << "worker_" << id << "  oid: " << target_oid << dendl;
+    bufferlist data = read_object_data(base_ioctx, target_oid);
     if (data.length() == 0) {
       ldpp_dout(dpp, 5) << "Skip dedup object "
-        << rados_object.object_name << ", object data size is 0" << dendl;
+        << target_oid << ", object data size is 0" << dendl;
       continue;
     }
-
     auto chunks = do_cdc(data, chunk_algo, chunk_size);
 
     // check if a chunk is duplicated in sampled objects
@@ -85,7 +83,8 @@ void* RGWDedupWorker::entry()
     * Object has 3 state, can be transferred to another state.
     * - New: Never scanned before, so it must be transferred to Cold or Deduped state
     * - Cold: No duplicated chunk has been found "so far", so entire object data is evicted to cold pool
-    * - Deduped: Deduplication has occurred due to the duplication of the chunks of the object. Duplicated chunks data are evicted to cold pool
+    * - Deduped: Deduplication has occurred due to the duplication of the chunks of the object.
+    *     Duplicated chunks data are evicted to cold pool
     *
     * example) 
     * +-----------+-----------+-----------+-----------+
@@ -99,14 +98,15 @@ void* RGWDedupWorker::entry()
     * In single round, an object is deduplicated with the following policies:
     * 1) (New, Cold -> Cold) If all chunks are not duplicated, evict entire object data to the cold pool
     * 2) (New, Cold -> Deduped) If some chunks are found duplicated, deduplicate the chunks to the cold pool
-    * 3) (Deduped -> Deduped) If the chunk was in deduped state, retain the Dedup state (even if can't find duplicate in this round)
+    * 3) (Deduped -> Deduped) If the chunk was in deduped state, retain the Dedup state
+    *       (even if can't find duplicate in this round)
     */
-    
-    int is_cold = check_object_exists(cold_ioctx, rados_object.object_name);
+
+    int is_cold = check_object_exists(cold_ioctx, target_oid);
 
     // New -> Cold
     if (is_cold < 0 && redundant_chunks.size() <= 0) {
-      int ret = write_object_data(cold_ioctx, rados_object.object_name, data);
+      int ret = write_object_data(cold_ioctx, target_oid, data);
       if (ret < 0) {
         continue;
       }
@@ -114,13 +114,13 @@ void* RGWDedupWorker::entry()
       chunk_t cold_object = {
         .start = 0,
         .size = data.length(),
-        .fingerprint = rados_object.object_name,
+        .fingerprint = target_oid,
         .data = data
       };
 
-      ret = try_set_chunk(ioctx, cold_ioctx, rados_object.object_name, cold_object);
+      ret = try_set_chunk(base_ioctx, cold_ioctx, target_oid, cold_object);
       if (ret < 0) { // Overlapped(Already Cold or Deduped)
-        ret = remove_object(cold_ioctx, rados_object.object_name);
+        ret = remove_object(cold_ioctx, target_oid);
       }
       else {
         if (perfcounter) {
@@ -132,7 +132,7 @@ void* RGWDedupWorker::entry()
     // New, Cold, Deduped -> Deduped
     else if (redundant_chunks.size() > 0) {
       if (is_cold >= 0) { // Cold
-        int ret = clear_manifest(ioctx, rados_object.object_name);
+        int ret = clear_manifest(base_ioctx, target_oid);
         if (ret < 0) {
           continue;
         }
@@ -142,38 +142,64 @@ void* RGWDedupWorker::entry()
         }
       }
       
-      do_chunk_dedup(ioctx, cold_ioctx, rados_object.object_name, redundant_chunks);
+      do_chunk_dedup(base_ioctx, cold_ioctx, target_oid, redundant_chunks);
     }
 
-    do_data_evict(ioctx, rados_object.object_name);
+    do_data_evict(base_ioctx, target_oid);
   }
-  
+}
+
+void* RGWDedupWorker::entry()
+{
+  ldpp_dout(dpp, 20) << "RGWDedupWorker_" << id << " start" << dendl;
+
+  chunk_algo = fpmanager->get_chunk_algo();
+  ceph_assert(chunk_algo == "fixed" || chunk_algo == "fastcdc");
+  chunk_size = fpmanager->get_chunk_size();
+  ceph_assert(chunk_size > 0);
+  fp_algo = fpmanager->get_fp_algo();
+  ceph_assert(fp_algo == "sha1" || fp_algo == "sha256" || fp_algo == "sha512");
+
+  for (auto& iter : base_ioctx_map) {
+    uint32_t num_objs = 0;
+    IoCtx base_ioctx = iter.second;
+    ObjectCursor pool_begin = base_ioctx.object_list_begin();
+    ObjectCursor pool_end = base_ioctx.object_list_end();
+    ObjectCursor shard_begin, shard_end;
+
+    // get current worker's shard range of the base pool
+    base_ioctx.object_list_slice(pool_begin, pool_end, gid, num_total_workers,
+                                 &shard_begin, &shard_end);
+    ldpp_dout(dpp, 0) << "gid/total: " << gid << "/" << num_total_workers << ", id: " << id << ", scan dir: " << obj_scan_dir << dendl;
+    ObjectCursor obj_cursor = shard_begin;
+    while (obj_cursor < shard_end) {
+      vector<ObjectItem> obj_shard;
+      int ret = base_ioctx.object_list(obj_cursor, shard_end, MAX_OBJ_SCAN_SIZE, {},
+                                       &obj_shard, &obj_cursor);
+      if (ret < 0) {
+        ldpp_dout(dpp, 0) << "error object_list: " << cpp_strerror(ret) << dendl;
+        return nullptr;
+      }
+      num_objs += obj_shard.size();
+
+      if (obj_scan_dir) {
+        try_object_dedup(base_ioctx, obj_shard.begin(), obj_shard.end());
+      } else {
+        try_object_dedup(base_ioctx, obj_shard.rbegin(), obj_shard.rend());
+      }
+    }
+    ldpp_dout(dpp, 0) << "RGWDedupWorker_" << id << " pool: " << base_ioctx.get_pool_name() << ", num objs: " << num_objs << dendl;
+  }
+
+  // reverse object scan dir
+  obj_scan_dir ^= 1;
+
   return nullptr;
 }
 
 void RGWDedupWorker::finalize()
 {
 
-}
-
-void RGWDedupWorker::append_obj(target_rados_object new_obj)
-{
-  rados_objs.emplace_back(new_obj);
-}
-
-size_t RGWDedupWorker::get_num_objs()
-{
-  return rados_objs.size();
-}
-
-void RGWDedupWorker::clear_objs()
-{
-  rados_objs.clear();
-}
-
-string RGWDedupWorker::get_id()
-{
-  return "DedupWorker_" + to_string(id);
 }
 
 bufferlist RGWDedupWorker::read_object_data(IoCtx& ioctx, string object_name)
@@ -224,8 +250,7 @@ int RGWDedupWorker::write_object_data(IoCtx &ioctx, string object_name, bufferli
 int RGWDedupWorker::check_object_exists(IoCtx& ioctx, string object_name) {
   uint64_t size;
   time_t mtime;
-  int ret = ioctx.stat(object_name, &size, &mtime);
-  return ret;
+  return ioctx.stat(object_name, &size, &mtime);
 }
 
 int RGWDedupWorker::try_set_chunk(IoCtx& ioctx, IoCtx &cold_ioctx, string object_name, chunk_t &chunk) {
@@ -237,11 +262,12 @@ int RGWDedupWorker::try_set_chunk(IoCtx& ioctx, IoCtx &cold_ioctx, string object
     chunk.fingerprint,
     0,
     CEPH_OSD_OP_FLAG_WITH_REFERENCE);
-  int ret = ioctx.operate(object_name, &chunk_op, nullptr);
-  return ret;
+  return ioctx.operate(object_name, &chunk_op, nullptr);
 }
 
-void RGWDedupWorker::do_chunk_dedup(IoCtx &ioctx, IoCtx &cold_ioctx, string object_name, list<chunk_t> redundant_chunks) {
+void RGWDedupWorker::do_chunk_dedup(IoCtx &ioctx,
+                                    IoCtx &cold_ioctx,
+                                    string object_name, list<chunk_t> redundant_chunks) {
   for (auto chunk : redundant_chunks) {
     if (check_object_exists(cold_ioctx, chunk.fingerprint) < 0) {
       int ret = write_object_data(cold_ioctx, chunk.fingerprint, chunk.data);
@@ -329,33 +355,23 @@ vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> RGWDedupWorker::do_cdc(
 string RGWDedupWorker::generate_fingerprint(
   bufferlist chunk_data, string fp_algo)
 {
-  string ret;
-
   switch (pg_pool_t::get_fingerprint_from_str(fp_algo)) {
     case pg_pool_t::TYPE_FINGERPRINT_SHA1:
-      ret = crypto::digest<crypto::SHA1>(chunk_data).to_str();
-      break;
+      return crypto::digest<crypto::SHA1>(chunk_data).to_str();
 
     case pg_pool_t::TYPE_FINGERPRINT_SHA256:
-      ret = crypto::digest<crypto::SHA256>(chunk_data).to_str();
-      break;
+      return crypto::digest<crypto::SHA256>(chunk_data).to_str();
 
     case pg_pool_t::TYPE_FINGERPRINT_SHA512:
-      ret = crypto::digest<crypto::SHA512>(chunk_data).to_str();
-      break;
+      return crypto::digest<crypto::SHA512>(chunk_data).to_str();
 
     default:
       ceph_assert(0 == "Invalid fp_algo type");
       break;
   }
-  return ret;
+  return string();
 }
 
-
-string RGWChunkScrubWorker::get_id()
-{
-  return "ScrubWorker_" + to_string(id);
-}
 
 int RGWChunkScrubWorker::do_chunk_repair(IoCtx& cold_ioctx,
 					 const string chunk_obj_name,
@@ -401,21 +417,20 @@ int RGWChunkScrubWorker::get_chunk_refs(IoCtx& chunk_ioctx,
 int RGWChunkScrubWorker::get_src_ref_cnt(const hobject_t& src_obj,
                                          const string& chunk_oid)
 {
-  int src_ref_cnt = 0;
-  Rados* rados = store->getRados()->get_rados_handle();
-
   IoCtx src_ioctx;
-  if (ioctx_map.find(src_obj.pool) == ioctx_map.end()) {
-    int ret = rados->ioctx_create2(src_obj.pool, src_ioctx);
-    if (ret < 0) {
-      ldpp_dout(dpp, 0) << chunk_oid << " reference " << src_obj
-              << ": referencing pool does not exist" << dendl;
-      return ret;
+  int src_ref_cnt = -1;
+  if (base_ioctx_map.find(src_obj.pool) != base_ioctx_map.end()) {
+    src_ioctx = base_ioctx_map[src_obj.pool];
+  } else {
+    // if base pool not found, try create ioctx
+    Rados* rados = store->getRados()->get_rados_handle();
+    if (rados->ioctx_create2(src_obj.pool, src_ioctx) < 0) {
+      ldpp_dout(dpp, 1) << __func__ << " src pool " << src_obj.pool <<
+        " doesn't exist" << dendl;
+      return -1;
     }
-    ioctx_map.emplace(src_obj.pool, src_ioctx);
-  } 
+  }
 
-  src_ioctx = ioctx_map[src_obj.pool];
   // get reference count that src object is pointing a chunk object
   src_ref_cnt = cls_cas_references_chunk(src_ioctx, src_obj.oid.name, chunk_oid);
   if (src_ref_cnt < 0) {
@@ -444,51 +459,51 @@ void* RGWChunkScrubWorker::entry()
 {
   ldpp_dout(dpp, 20) << "RGWChunkScrubWorker_" << id << " starts" << dendl;
 
-  // get sharded chunk objects from all cold pools
-  for (auto& cold_pool : cold_pool_info) {
-    ldpp_dout(dpp, 10) << "cold pool (" << cold_pool.ioctx.get_pool_name()
-       << ") has " << cold_pool.num_objs << " objects" << dendl;
+  // get sharded chunk objects from a cold pool
+  ObjectCursor pool_begin = cold_ioctx.object_list_begin();
+  ObjectCursor pool_end = cold_ioctx.object_list_end();
+  ObjectCursor shard_begin, shard_end;
 
-    IoCtx cold_ioctx = cold_pool.ioctx;
-    ObjectCursor obj_cursor = cold_pool.shard_begin;
-    while (obj_cursor < cold_pool.shard_end) {
-      vector<ObjectItem> obj_shard;
-      int ret = cold_ioctx.object_list(obj_cursor, cold_pool.shard_end, MAX_OBJ_SCAN_SIZE, {},
-                                       &obj_shard, &obj_cursor);
-      if (ret < 0) {
-        ldpp_dout(dpp, 0) << "error object_list: " << cpp_strerror(ret) << dendl;
-        return nullptr;
+  // get current worker's shard range of the cold pool
+  cold_ioctx.object_list_slice(pool_begin, pool_end, gid, num_total_workers,
+                               &shard_begin, &shard_end);
+  ObjectCursor obj_cursor = shard_begin;
+  while (obj_cursor < shard_end) {
+    vector<ObjectItem> obj_shard;
+    int ret = cold_ioctx.object_list(obj_cursor, shard_end, MAX_OBJ_SCAN_SIZE, {},
+                                     &obj_shard, &obj_cursor);
+    if (ret < 0) {
+      ldpp_dout(dpp, 0) << "error object_list: " << cpp_strerror(ret) << dendl;
+      return nullptr;
+    }
+
+    for (const auto& obj : obj_shard) {
+      auto cold_oid = obj.oid;
+      chunk_refs_t refs;
+      if (get_chunk_refs(cold_ioctx, cold_oid, refs) < 0) {
+        continue;
       }
 
-      for (const auto& obj : obj_shard) {
-        auto cold_oid = obj.oid;
-        chunk_refs_t refs;
-        ret = get_chunk_refs(cold_ioctx, cold_oid, refs);
-        if (ret < 0) {
-          continue;
-        }
+      chunk_refs_by_object_t* chunk_refs =
+        static_cast<chunk_refs_by_object_t*>(refs.r.get());
 
-        chunk_refs_by_object_t* chunk_refs =
-          static_cast<chunk_refs_by_object_t*>(refs.r.get());
+      set<hobject_t> src_obj_set(chunk_refs->by_object.begin(), 
+                                 chunk_refs->by_object.end());
+      for (auto& src_obj : src_obj_set) {
+        // get reference count that chunk object is pointing a src object
+        int chunk_ref_cnt = chunk_refs->by_object.count(src_obj);
+        int src_ref_cnt = get_src_ref_cnt(src_obj, cold_oid);
 
-        set<hobject_t> src_obj_set(chunk_refs->by_object.begin(), 
-                                   chunk_refs->by_object.end());
-        for (auto& src_obj : src_obj_set) {
-          // get reference count that chunk object is pointing a src object
-          int chunk_ref_cnt = chunk_refs->by_object.count(src_obj);
-          int src_ref_cnt = get_src_ref_cnt(src_obj, cold_oid);
+        ldpp_dout(dpp, 10) << "ScrubWorker_" << id << " chunk obj: " << cold_oid
+          << ", src obj: " << src_obj.oid.name << ", src pool: " << src_obj.pool
+          <<  ", chunk_ref_cnt: " << chunk_ref_cnt << ", src_ref_cnt: " << src_ref_cnt
+          << dendl;
 
-          ldpp_dout(dpp, 10) << "ScrubWorker_" << id << " chunk obj: " << cold_oid
-            << ", src obj: " << src_obj.oid.name << ", src pool: " << src_obj.pool
-            <<  ", chunk_ref_cnt: " << chunk_ref_cnt << ", src_ref_cnt: " << src_ref_cnt
-            << dendl;
-
-          if (chunk_ref_cnt != src_ref_cnt) {
-            ret = do_chunk_repair(cold_ioctx, cold_oid, src_obj, chunk_ref_cnt, src_ref_cnt);
-            if (ret < 0) {
-              ldpp_dout(dpp, 0) << "do_chunk_repair fail: " << cpp_strerror(ret) << dendl;
-              continue;
-            }
+        if (chunk_ref_cnt != src_ref_cnt) {
+          ret = do_chunk_repair(cold_ioctx, cold_oid, src_obj, chunk_ref_cnt, src_ref_cnt);
+          if (ret < 0) {
+            ldpp_dout(dpp, 0) << "do_chunk_repair fail: " << cpp_strerror(ret) << dendl;
+            continue;
           }
         }
       }
@@ -499,10 +514,6 @@ void* RGWChunkScrubWorker::entry()
 
 void RGWChunkScrubWorker::finalize()
 {
-  cold_pool_info.clear();
+
 }
 
-void RGWChunkScrubWorker::append_cold_pool_info(cold_pool_info_t new_pool_info)
-{
-  cold_pool_info.emplace_back(new_pool_info);
-}

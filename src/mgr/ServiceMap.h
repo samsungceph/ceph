@@ -56,6 +56,11 @@ struct ServiceMap {
   void dump(ceph::Formatter *f) const;
   static void generate_test_instances(std::list<ServiceMap*>& ls);
 
+  std::pair<Service*, bool> get_service(const std::string& service) {
+    auto [s, added] = services.try_emplace(service);
+    return {&s->second, added};
+  }
+
   std::pair<Daemon*,bool> get_daemon(const std::string& service,
 				     const std::string& daemon) {
     auto& s = services[service];
