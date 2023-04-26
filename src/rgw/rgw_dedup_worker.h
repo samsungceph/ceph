@@ -19,6 +19,7 @@ using namespace librados;
 struct target_rados_object;
 
 class RGWFPManager;
+class RGWSI_Zone;
 
 class Worker : public Thread
 {
@@ -30,6 +31,11 @@ protected:
 
   // local worker id of a RGWDedup
   int id;
+  // # workers throughout total RGWDedups (# RGWDedup * # workers)
+  int num_total_workers = 0;
+  // global worker id throughout total RGWDedups
+  int gid = -1;
+  map<uint64_t, IoCtx> base_ioctx_map;
   IoCtx cold_ioctx;
 
 public:
@@ -48,12 +54,16 @@ public:
 
   int get_id();
   void set_run(bool run_status);
+  void prepare(const int new_total_workers, const int new_gid);
+  void clear_base_ioctx_map();
+  void append_base_ioctx(uint64_t name, IoCtx& ioctx);
 };
 
 // <chunk data, <offset, length>>
 using ChunkInfoType = tuple<bufferlist, pair<uint64_t, uint64_t>>;
 class RGWDedupWorker : public Worker
 {
+  bool obj_scan_dir;    // true: scan obj forward, false: scan object reverse
   shared_ptr<RGWFPManager> fpmanager;
   vector<target_rados_object> rados_objs;
   string chunk_algo;
@@ -68,7 +78,9 @@ public:
                  int _id,
                  shared_ptr<RGWFPManager> _fpmanager,
                  IoCtx _cold_ioctx)
-    : Worker(_dpp, _cct, _store, _id, _cold_ioctx), fpmanager(_fpmanager) {}
+    : Worker(_dpp, _cct, _store, _id, _cold_ioctx),
+      obj_scan_dir(true),
+      fpmanager(_fpmanager) {}
   RGWDedupWorker(const RGWDedupWorker& rhs) = delete;
   virtual ~RGWDedupWorker() override {}
 
@@ -85,6 +97,8 @@ public:
   size_t get_num_objs();
   void clear_objs();
 
+  template <typename Iter>
+  void try_object_dedup(IoCtx& base_ioctx, Iter begin, Iter end);
   bufferlist read_object_data(IoCtx &ioctx, string object_name);
   int write_object_data(IoCtx &ioctx, string object_name, bufferlist &data);
   int check_object_exists(IoCtx& ioctx, string object_name);
@@ -100,37 +114,20 @@ public:
   string generate_fingerprint(bufferlist chunk_data, string fp_algo);
 };
 
-struct cold_pool_info_t
-{
-  IoCtx ioctx;
-  uint64_t num_objs;
-  ObjectCursor shard_begin;
-  ObjectCursor shard_end;
-};
-
 class RGWChunkScrubWorker : public Worker
 {
-  int num_threads;
-  vector<cold_pool_info_t> cold_pool_info;
-  map<uint64_t, IoCtx> ioctx_map;
 
 public:
   RGWChunkScrubWorker(const DoutPrefixProvider* _dpp,
                       CephContext* _cct,
                       rgw::sal::RadosStore* _store,
                       int _id,
-                      int _num_threads,
                       IoCtx _cold_ioctx)
-    : Worker(_dpp, _cct, _store, _id, _cold_ioctx),
-      num_threads(_num_threads) {}
+    : Worker(_dpp, _cct, _store, _id, _cold_ioctx) {}
   RGWChunkScrubWorker(const RGWChunkScrubWorker& rhs) = delete;
   virtual ~RGWChunkScrubWorker() override {}
   
   virtual void* entry() override;
-  void finalize();
-
-  void append_cold_pool_info(cold_pool_info_t cold_pool_info);
-  void clear_chunk_pool_info() {cold_pool_info.clear(); }
 
   // fix mismatched chunk reference
   int do_chunk_repair(IoCtx& cold_ioctx, const string chunk_obj_name,
