@@ -31,6 +31,23 @@ int rgw_perf_start(CephContext *cct)
   plb.add_u64_counter(l_rgw_cache_hit, "cache_hit", "Cache hits");
   plb.add_u64_counter(l_rgw_cache_miss, "cache_miss", "Cache miss");
 
+  plb.add_u64(l_rgw_dedup_original_data_size, "dedup_original_data_size", "Total RGW object size before deduplication");
+  plb.add_u64(l_rgw_dedup_cold_data_size, "dedup_cold_data_size", "Total cold object size during deduplication");
+  plb.add_u64(l_rgw_dedup_chunk_data_size, "dedup_chunk_data_size", "Total chunk object size during deduplication");
+  plb.add_u64(l_rgw_dedup_deduped_data_size, "dedup_deduped_data_size", "Current deduped data size during deduplication");
+  plb.add_u64(l_rgw_dedup_current_worker_mode, "dedup_current_worker_mode", "Current worker mode(dedup | scrub)");
+  plb.add_u64_counter(l_rgw_dedup_worker_read, "dedup_worker_read", "RGWDedupWorker's read size to base pools");
+  plb.add_u64_counter(l_rgw_dedup_worker_write, "dedup_worker_write", "RGWDedupWorker's write size to cold pools");
+  plb.add_u64(l_rgw_dedup_worker_count, "dedup_worker_count", "Configuration value of RGWDedupWorker count");
+  plb.add_u64(l_rgw_dedup_scrub_ratio, "dedup_scrub_ratio", "Configuration value of dedup_scrub_ratio");
+  plb.add_u64(l_rgw_dedup_chunk_algo, "dedup_chunk_algo", "Configuration value of chunk_algo");
+  plb.add_u64(l_rgw_dedup_chunk_size, "dedup_chunk_size", "Configuration value of chunk_size");
+  plb.add_u64(l_rgw_dedup_fp_algo, "dedup_fp_algo", "Configuration value of fp_algo");
+  plb.add_u64(l_rgw_dedup_hitset_count, "dedup_hitset_count", "Configuration value of hitset_count");
+  plb.add_u64(l_rgw_dedup_hitset_period, "dedup_hitset_period", "Configuration value of hitset_period");
+  plb.add_u64(l_rgw_dedup_hitset_target_size, "dedup_hitset_target_size", "Configuration value of hitset_target_size");
+  plb.add_u64(l_rgw_dedup_hitset_fpp, "dedup_hitset_fpp", "Configuration value of hitset_target_fpp");
+
   plb.add_u64_counter(l_rgw_keystone_token_cache_hit, "keystone_token_cache_hit", "Keystone token cache hits");
   plb.add_u64_counter(l_rgw_keystone_token_cache_miss, "keystone_token_cache_miss", "Keystone token cache miss");
 

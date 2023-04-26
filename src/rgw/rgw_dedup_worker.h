@@ -6,6 +6,7 @@
 
 #include "cls/cas/cls_cas_internal.h"
 #include "include/rados/librados.hpp"
+#include "rgw_perf_counters.h"
 #include "rgw_fp_manager.h"
 #include "rgw_dedup_manager.h"
 #include "common/CDC.h"
