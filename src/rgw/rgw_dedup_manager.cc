@@ -118,8 +118,31 @@ void* RGWDedupManager::entry()
   ldpp_dout(dpp, 2) << "RGWDedupManager started" << dendl;
   uint32_t dedup_worked_cnt = 0;
   while (!get_down_flag()) {
+    if (perfcounter) {
+      perfcounter->set(l_rgw_dedup_worker_count, num_workers);
+      perfcounter->set(l_rgw_dedup_scrub_ratio, dedup_scrub_ratio);
+
+      if (chunk_algo == "fixed") {
+        perfcounter->set(l_rgw_dedup_chunk_algo, 1);
+      } else if (chunk_algo == "fastcdc") {
+        perfcounter->set(l_rgw_dedup_chunk_algo, 2);
+      }
+      perfcounter->set(l_rgw_dedup_chunk_size, chunk_size);
+      
+      if (fp_algo == "sha1") {
+        perfcounter->set(l_rgw_dedup_fp_algo, 1);
+      } else if (fp_algo == "sha256") {
+        perfcounter->set(l_rgw_dedup_fp_algo, 2);
+      } else if (fp_algo == "sha512") {
+        perfcounter->set(l_rgw_dedup_fp_algo, 3);
+      }
+    }
+
     if (dedup_worked_cnt < dedup_scrub_ratio) {
       // do dedup
+      if (perfcounter) {
+        perfcounter->set(l_rgw_dedup_current_worker_mode, 1);
+      }
       ceph_assert(fpmanager.get());
       fpmanager->reset_fpmap();
 
@@ -128,6 +151,10 @@ void* RGWDedupManager::entry()
       wait_worker(dedup_workers);
     } else {
       // do scrub
+      if (perfcounter) {
+        perfcounter->set(l_rgw_dedup_current_worker_mode, 2);
+      }
+
       run_scrub(dedup_worked_cnt);
       wait_worker(scrub_workers);
     }
