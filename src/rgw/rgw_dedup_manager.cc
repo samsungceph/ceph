@@ -157,7 +157,32 @@ void* RGWDedupManager::entry()
   ldpp_dout(dpp, 2) << "RGWDedupManager started" << dendl;
 
   while (!get_down_flag()) {
+    if (perfcounter) {
+      perfcounter->set(l_rgw_dedup_worker_count, num_workers);
+      perfcounter->set(l_rgw_dedup_scrub_ratio, dedup_scrub_ratio);
+
+      if (chunk_algo == "fixed") {
+        perfcounter->set(l_rgw_dedup_chunk_algo, 1);
+      } else if (chunk_algo == "fastcdc") {
+        perfcounter->set(l_rgw_dedup_chunk_algo, 2);
+      }
+      
+      perfcounter->set(l_rgw_dedup_chunk_size, chunk_size);
+      
+      if (fp_algo == "sha1") {
+        perfcounter->set(l_rgw_dedup_fp_algo, 1);
+      } else if (fp_algo == "sha256") {
+        perfcounter->set(l_rgw_dedup_fp_algo, 2);
+      } else if (fp_algo == "sha512") {
+        perfcounter->set(l_rgw_dedup_fp_algo, 3);
+      }
+    }
+
     if (dedup_worked_cnt < dedup_scrub_ratio) {
+      if (perfcounter) {
+        perfcounter->set(l_rgw_dedup_current_worker_mode, 1);
+      }
+
       int ret = prepare_dedup();
       if (ret < 0) {
         ldpp_dout(dpp, 0) << "prepare_dedup() failed" << dendl;
@@ -185,6 +210,10 @@ void* RGWDedupManager::entry()
       ++dedup_worked_cnt;
     } else {
       // scrub period
+      if (perfcounter) {
+        perfcounter->set(l_rgw_dedup_current_worker_mode, 2);
+      }
+
       for (auto& worker : scrub_workers) {
         ceph_assert(worker.get());
         worker->clear_chunk_pool_info();
@@ -280,6 +309,7 @@ int RGWDedupManager::prepare_dedup()
   void* handle = nullptr;
   bool has_remain_bkts = true;
   int total_obj_cnt = 0;
+  uint64_t total_object_size = 0;
 
   rados_objs.clear();
   int ret = store->meta_list_keys_init(dpp, "bucket", string(), &handle);
@@ -333,6 +363,8 @@ int RGWDedupManager::prepare_dedup()
 
           RGWObjManifest& manifest = *stat_op.result.manifest;
           RGWObjManifest::obj_iterator miter;
+          total_object_size += manifest.get_obj_size();
+          
           for (miter = manifest.obj_begin(dpp);
                miter != manifest.obj_end(dpp);
                ++miter) {
@@ -357,6 +389,10 @@ int RGWDedupManager::prepare_dedup()
     }
   }
   store->meta_list_keys_complete(handle);
+
+  if (perfcounter) {
+    perfcounter->set(l_rgw_dedup_original_data_size, total_object_size);
+  }
 
   return total_obj_cnt;
 }

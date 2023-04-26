@@ -8,6 +8,7 @@
 #include "common/Cond.h"
 #include "common/Thread.h"
 #include "rgw_sal_rados.h"
+#include "rgw_perf_counters.h"
 #include "rgw_fp_manager.h"
 #include "rgw_dedup_worker.h"
 
