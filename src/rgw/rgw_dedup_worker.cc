@@ -125,14 +125,23 @@ void* RGWDedupWorker::entry()
       if (ret < 0) { // Overlapped(Already Cold or Deduped)
         ret = remove_object(cold_ioctx, rados_object.object_name);
       }
+      else {
+        if (perfcounter) {
+          perfcounter->inc(l_rgw_dedup_cold_data_size, data.length());
+        }
+      }
     }
 
-    // New, Cold -> Deduped
+    // New, Cold, Deduped -> Deduped
     else if (redundant_chunks.size() > 0) {
       if (is_cold >= 0) { // Cold
         int ret = clear_manifest(ioctx, rados_object.object_name);
         if (ret < 0) {
           continue;
+        }
+
+        if (perfcounter) {
+          perfcounter->dec(l_rgw_dedup_cold_data_size, data.length());
         }
       }
       
@@ -141,6 +150,7 @@ void* RGWDedupWorker::entry()
 
     do_data_evict(ioctx, rados_object.object_name);
   }
+  
   return nullptr;
 }
 
@@ -184,6 +194,11 @@ bufferlist RGWDedupWorker::read_object_data(IoCtx& ioctx, string object_name)
     offset += ret;
     whole_data.claim_append(partial_data);
   }
+
+  if (perfcounter) {
+    perfcounter->inc(l_rgw_dedup_worker_read, whole_data.length());
+  }
+
   return whole_data;
 }
 
@@ -196,6 +211,11 @@ int RGWDedupWorker::write_object_data(IoCtx &ioctx, string object_name, bufferli
       << "Failed to write rados object, pool_name: "<< ioctx.get_pool_name()
       << ", object_name: " << object_name << ", ret: " << ret << dendl;
   }
+
+  if (perfcounter) {
+    perfcounter->inc(l_rgw_dedup_worker_write, data.length());
+  }
+  
   return ret;
 }
 
@@ -231,8 +251,14 @@ void RGWDedupWorker::do_chunk_dedup(IoCtx &ioctx, IoCtx &cold_ioctx, string obje
           << ", ret: " << ret << dendl;
         return;
       }
+      if (perfcounter) {
+        perfcounter->inc(l_rgw_dedup_chunk_data_size, chunk.data.length());
+      }
     }
-    try_set_chunk(ioctx, cold_ioctx, object_name, chunk);
+    int ret = try_set_chunk(ioctx, cold_ioctx, object_name, chunk);
+    if (ret >= 0 && perfcounter) {
+      perfcounter->inc(l_rgw_dedup_deduped_data_size, chunk.data.length());
+    }
   }
 }
 
