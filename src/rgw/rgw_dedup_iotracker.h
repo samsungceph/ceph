@@ -10,6 +10,7 @@
 #include "osd/HitSet.h"
 #include "include/utime.h"
 #include "rgw_common.h"
+#include "rgw_perf_counters.h"
 
 extern const uint32_t DEFAULT_HITSET_COUNT;
 extern const uint32_t DEFAULT_HITSET_PERIOD;

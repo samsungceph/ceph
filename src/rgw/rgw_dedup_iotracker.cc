@@ -8,6 +8,12 @@ void RGWIOTracker::initialize()
 {
   create_hit_set();
   hit_set_map.clear();
+  if (perfcounter) {
+    perfcounter->set(l_rgw_dedup_hitset_count, hit_set_count);
+    perfcounter->set(l_rgw_dedup_hitset_period, hit_set_period);
+    perfcounter->set(l_rgw_dedup_hitset_target_size, hit_set_target_size);
+    perfcounter->set(l_rgw_dedup_hitset_fpp, hit_set_fpp * 100);
+  }
 }
 
 void RGWIOTracker::remove_oldest_hit_set()
@@ -139,18 +145,27 @@ void RGWIOTracker::set_hit_set_count(const uint32_t new_count)
 {
   ceph_assert(new_count > 0);
   hit_set_count = new_count;
+  if (perfcounter) {
+    perfcounter->set(l_rgw_dedup_hitset_count, hit_set_count);
+  }
 }
 
 void RGWIOTracker::set_hit_set_period(const uint32_t new_period)
 {
   ceph_assert(new_period > 0);
   hit_set_period = new_period;
+  if (perfcounter) {
+    perfcounter->set(l_rgw_dedup_hitset_period, hit_set_period);
+  }
 }
 
 void RGWIOTracker::set_hit_set_target_size(const uint32_t new_target_size)
 {
   ceph_assert(new_target_size > 0);
   hit_set_target_size = new_target_size;
+  if (perfcounter) {
+    perfcounter->set(l_rgw_dedup_hitset_target_size, hit_set_target_size);
+  }
 }
 
 void RGWIOTracker::set_hit_set_type(const HitSet::impl_type_t new_type)
