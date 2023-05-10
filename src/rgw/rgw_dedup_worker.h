@@ -12,6 +12,7 @@
 #include "common/CDC.h"
 
 extern const int MAX_OBJ_SCAN_SIZE;
+extern const uint32_t MAX_CHUNK_REF_SIZE;
 
 extern const int MAX_OBJ_SCAN_SIZE;
 
@@ -61,6 +62,9 @@ public:
   void prepare(const int new_total_workers, const int new_gid);
   void clear_base_ioctx_map(uint64_t id, IoCtx& ioctx);
   void append_base_ioctx(uint64_t name, IoCtx& ioctx);
+
+  // get references of chunk object
+  int get_chunk_refs(IoCtx& chunk_ioctx, const string& chunk_oid, chunk_refs_t& refs);
 };
 
 // <chunk data, <offset, length>>
@@ -73,6 +77,7 @@ class RGWDedupWorker : public Worker
   uint32_t chunk_size;
   string fp_algo;
   uint32_t dedup_threshold;
+  uint32_t max_chunk_ref_size;
 
 public:
   RGWDedupWorker(const DoutPrefixProvider* _dpp,
@@ -91,7 +96,8 @@ public:
       chunk_algo(_chunk_algo),
       chunk_size(_chunk_size),
       fp_algo(_fp_algo),
-      dedup_threshold(_dedup_threshold) {}
+      dedup_threshold(_dedup_threshold),
+      max_chunk_ref_size(MAX_CHUNK_REF_SIZE) {}
   RGWDedupWorker() = delete;
   RGWDedupWorker(const RGWDedupWorker& rhs) = delete;
   RGWDedupWorker& operator=(const RGWDedupWorker& rhs) = delete;
@@ -152,9 +158,6 @@ public:
                       const hobject_t src_obj, int chunk_ref_cnt,
                       int src_ref_cnt);
   
-  // get references of chunk object
-  int get_chunk_refs(IoCtx& chunk_ioctx, const string& chunk_oid, chunk_refs_t& refs);
-
   // check whether dedup reference is mismatched (false is mismatched) 
   int get_src_ref_cnt(const hobject_t& src_obj, const string& chunk_oid);
 };
