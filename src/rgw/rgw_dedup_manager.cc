@@ -11,6 +11,7 @@
 const int DEDUP_INTERVAL = 3;
 const int MAX_OBJ_SCAN_SIZE = 100;
 const int RETRY_SLEEP_PERIOD = 5;
+const uint32_t MAX_CHUNK_REF_SIZE = 10000;
 const string DEFAULT_COLD_POOL_NAME = "default-cold-pool";
 
 int RGWDedupManager::initialize()
@@ -36,7 +37,7 @@ int RGWDedupManager::initialize()
   fpmanager_low_watermark = cct->_conf->rgw_dedup_fpmanager_low_watermark;
 
   // initialize components
-  fpmanager = make_shared<RGWFPManager>(fpmanager_memory_limit, fpmanager_low_watermark);
+  fpmanager = make_shared<RGWFPManager>(dedup_threshold, fpmanager_memory_limit, fpmanager_low_watermark);
 
   for (uint32_t i = 0; i < num_workers; ++i) {
     dedup_workers.emplace_back(

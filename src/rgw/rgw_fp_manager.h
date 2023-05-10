@@ -12,9 +12,8 @@ using namespace std;
 class RGWFPManager
 {
 public:
-  RGWFPManager() {}
-  RGWFPManager(uint64_t _memory_limit, uint32_t _low_watermark) 
-    : memory_limit(_memory_limit), low_watermark(_low_watermark) {}
+  RGWFPManager(uint32_t _dedup_threshold, uint64_t _memory_limit, uint32_t _low_watermark)
+    : dedup_threshold(_dedup_threshold), memory_limit(_memory_limit), low_watermark(_low_watermark) {}
   RGWFPManager(const RGWFPManager& rhs) = delete;
   virtual ~RGWFPManager() {}
 
@@ -27,6 +26,7 @@ public:
 
 private:
   std::shared_mutex fingerprint_lock;
+  uint32_t dedup_threshold;
   uint64_t memory_limit;
   uint32_t low_watermark;
   unordered_map<string, uint32_t> fp_map;
