@@ -41,6 +41,25 @@ void Worker::append_base_ioctx(uint64_t id, IoCtx& ioctx)
   base_ioctx_map.emplace(id, ioctx);
 }
 
+int Worker::get_chunk_refs(IoCtx& chunk_ioctx, const string& chunk_oid, chunk_refs_t& refs)
+{
+  bufferlist bl;
+  int ret = chunk_ioctx.getxattr(chunk_oid, CHUNK_REFCOUNT_ATTR, bl);
+  if (ret < 0) {
+    // non-chunk objects are not targets of a RGWChunkScrubWorker
+    ldpp_dout(dpp, 0) << "object " << chunk_oid << " getxattr failed" << dendl;
+    return -1;
+  }
+  auto p = bl.cbegin();
+  decode(refs, p);
+
+  if (refs.get_type() != chunk_refs_t::TYPE_BY_OBJECT) {
+    ldpp_dout(dpp, 0) << "do not allow other types except for TYPE_BY_OBJECT" << dendl;
+    return -1;
+  }
+  return 0;
+}
+
 
 template <typename Iter>
 void RGWDedupWorker::try_object_dedup(IoCtx& base_ioctx, Iter begin, Iter end)
@@ -297,6 +316,18 @@ void RGWDedupWorker::do_chunk_dedup(IoCtx &ioctx,
       if (perfcounter) {
         perfcounter->inc(l_rgw_dedup_chunk_data_size, chunk.data.length());
       }
+    } else {
+      chunk_refs_t refs;
+      if (get_chunk_refs(cold_ioctx, chunk.fingerprint, refs)) {
+        continue;
+      }
+      chunk_refs_by_object_t* chunk_refs
+        = static_cast<chunk_refs_by_object_t*>(refs.r.get());
+
+      // # refs of chunk object must be less than MAX_CHUNK_REF_SIZE
+      if (chunk_refs->by_object.size() >= MAX_CHUNK_REF_SIZE) {
+        continue;
+      }
     }
     int ret = try_set_chunk(ioctx, cold_ioctx, object_name, chunk);
     if (ret >= 0 && perfcounter) {
@@ -404,27 +435,6 @@ int RGWChunkScrubWorker::do_chunk_repair(IoCtx& cold_ioctx,
     if (ret < 0) {
       return ret;
     }
-  }
-  return 0;
-}
-
-int RGWChunkScrubWorker::get_chunk_refs(IoCtx& chunk_ioctx,
-                                        const string& chunk_oid,
-                                        chunk_refs_t& refs)
-{
-  bufferlist bl;
-  int ret = chunk_ioctx.getxattr(chunk_oid, CHUNK_REFCOUNT_ATTR, bl);
-  if (ret < 0) {
-    // non-chunk objects are not targets of a RGWChunkScrubWorker
-    ldpp_dout(dpp, 0) << "object " << chunk_oid << " getxattr failed" << dendl;
-    return -1;
-  }
-  auto p = bl.cbegin();
-  decode(refs, p);
-
-  if (refs.get_type() != chunk_refs_t::TYPE_BY_OBJECT) {
-    ldpp_dout(dpp, 0) << "do not allow other types except for TYPE_BY_OBJECT" << dendl;
-    return -1;
   }
   return 0;
 }
