@@ -11,6 +11,7 @@
 const int DEDUP_INTERVAL = 3;
 const int MAX_OBJ_SCAN_SIZE = 100;
 const int RETRY_SLEEP_PERIOD = 5;
+const uint32_t MAX_CHUNK_REF_SIZE = 10000;
 const uint32_t DEFAULT_DEDUP_SCRUB_RATIO = 5;
 
 int RGWDedupManager::initialize()
