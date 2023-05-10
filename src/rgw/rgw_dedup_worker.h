@@ -12,6 +12,7 @@
 #include "common/CDC.h"
 
 extern const int MAX_OBJ_SCAN_SIZE;
+extern const uint32_t MAX_CHUNK_REF_SIZE;
 
 using namespace std;
 using namespace librados;
@@ -57,6 +58,9 @@ public:
   void prepare(const int new_total_workers, const int new_gid);
   void clear_base_ioctx_map();
   void append_base_ioctx(uint64_t name, IoCtx& ioctx);
+
+  // get references of chunk object
+  int get_chunk_refs(IoCtx& chunk_ioctx, const string& chunk_oid, chunk_refs_t& refs);
 };
 
 struct chunk_t {
@@ -132,9 +136,6 @@ public:
 		                  const hobject_t src_obj, int chunk_ref_cnt,
 		                  int src_ref_cnt);
   
-  // get references of chunk object
-  int get_chunk_refs(IoCtx& chunk_ioctx, const string& chunk_oid, chunk_refs_t& refs);
-
   // check whether dedup reference is mismatched (false is mismatched) 
   int get_src_ref_cnt(const hobject_t& src_obj, const string& chunk_oid);
 };
