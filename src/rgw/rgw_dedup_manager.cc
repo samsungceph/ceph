@@ -26,7 +26,7 @@ const double DEFAULT_HITSET_FPP = 0.05;
 
 void RGWDedupManager::initialize()
 {
-  fpmanager = make_shared<RGWFPManager>(chunk_algo, stoi(chunk_size), fp_algo);
+  fpmanager = make_shared<RGWFPManager>(chunk_algo, stoi(chunk_size), fp_algo, fpmanager_memory_limit, dedup_threshold);
   io_tracker = make_unique<RGWIOTracker>(dpp);
   io_tracker->initialize();
 
@@ -149,6 +149,7 @@ void* RGWDedupManager::entry()
   ldpp_dout(dpp, 2) << "RGWDedupManager started" << dendl;
 
   while (!get_down_flag()) {
+    // rgw.yaml.in에서 설정한 dedup 관련한 설정들을 여기서 전부 받아옴
     if (perfcounter) {
       perfcounter->set(l_rgw_dedup_worker_count, num_workers);
       perfcounter->set(l_rgw_dedup_scrub_ratio, dedup_scrub_ratio);

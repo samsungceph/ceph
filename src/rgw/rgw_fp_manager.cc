@@ -58,12 +58,42 @@ bool RGWFPManager::find(string& fingerprint)
   return found_item != fp_map.end();
 }
 
+void RGWFPManager::check_memory_limit_and_do_evict()
+{
+  uint64_t current_memory;
+  if ( fp_algo == "sha1" ) {
+    current_memory = 24 * fp_map.size();
+  }
+  else if ( fp_algo == "sha256" ) {
+    current_memory = 36 * fp_map.size();
+  }
+  else if ( fp_algo == "sha512") {
+    current_memory = 68 * fp_map.size();
+  }
+  
+  if ( memory_limit > current_memory ) {
+    bool memory_freed = false;
+    int current_dedup_threshold = dedup_threshold;
+    while (memory_freed == true && fp_map.size() != 0) {
+      for (auto iter = fp_map.begin(); iter != fp_map.end();) {
+        if (iter->second < dedup_threshold) {
+          iter = fp_map.erase(iter);
+          memory_freed = true;
+        } else {
+          current_dedup_threshold++;
+        }
+      }
+    }
+  }
+}
+
 void RGWFPManager::add(string& fingerprint)
 {
   unique_lock lock(fingerprint_lock);
   auto found_iter = fp_map.find(fingerprint);
-
+   
   if (found_iter == fp_map.end()) {
+    check_memory_limit_and_do_evict();
     fp_map.insert({fingerprint, 1});
   } else {
     ++found_iter->second;

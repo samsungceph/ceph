@@ -49,6 +49,8 @@ class RGWDedupManager : public Thread
   string chunk_size;
   string chunk_algo;
   string fp_algo;
+  ssize_t dedup_threshold;
+  uint64_t fpmanager_memory_limit;
   int num_workers;
   int dedup_scrub_ratio;
   int dedup_worked_cnt;
