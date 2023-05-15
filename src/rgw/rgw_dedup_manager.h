@@ -59,6 +59,9 @@ public:
 
   // WorkerType: RGWDedupWorker or RGWChunkScrubWorker
   template <typename WorkerType>
+  void prepare_worker(vector<WorkerType>& workers, const int num_rgwdedup,
+                      const int rgwdedup_id);
+  template <typename WorkerType>
   void run_worker(vector<WorkerType>& workers, string tname_prefix);
   template <typename WorkerType>
   void wait_worker(vector<WorkerType>& workers);
@@ -69,6 +72,7 @@ public:
                     const vector<pair<string, string>>& options);
   string create_osd_pool_set_cmd(const string prefix, const string base_pool,
                                  const string var, const string val);
+  int get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id);
 };
 
 #endif

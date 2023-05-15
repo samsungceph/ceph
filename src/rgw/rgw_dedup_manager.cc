@@ -10,6 +10,7 @@
 
 const int DEDUP_INTERVAL = 3;
 const int MAX_OBJ_SCAN_SIZE = 100;
+const int RETRY_SLEEP_PERIOD = 5;
 
 int RGWDedupManager::initialize()
 {
@@ -50,10 +51,10 @@ int RGWDedupManager::initialize()
 
   for (uint32_t i = 0; i < num_workers; ++i) {
     dedup_workers.emplace_back(
-      make_unique<RGWDedupWorker>(dpp, cct, store, i, num_workers, fpmanager, chunk_algo,
+      make_unique<RGWDedupWorker>(dpp, cct, store, i, fpmanager, chunk_algo,
                                   chunk_size, fp_algo, dedup_threshold, cold_ioctx));
     scrub_workers.emplace_back(
-      make_unique<RGWChunkScrubWorker>(dpp, cct, store, i, num_workers, cold_ioctx));
+      make_unique<RGWChunkScrubWorker>(dpp, cct, store, i, cold_ioctx));
   }
   return 0;
 }
@@ -83,6 +84,19 @@ void RGWDedupManager::update_base_pool_info()
 }
 
 template <typename WorkerType>
+void RGWDedupManager::prepare_worker(vector<WorkerType>& workers,
+                                     const int rgwdedup_cnt,
+                                     const int cur_rgwdedup_id)
+{
+  ceph_assert(!workers.empty());
+  for (auto& worker : workers) {
+    ceph_assert(worker.get());
+    worker->prepare(rgwdedup_cnt * num_workers,
+        cur_rgwdedup_id * rgwdedup_cnt + worker->get_id());
+  }
+}
+
+template <typename WorkerType>
 void RGWDedupManager::run_worker(vector<WorkerType>& workers, string tname_prefix)
 {
   ceph_assert(!workers.empty());
@@ -100,6 +114,64 @@ void RGWDedupManager::wait_worker(vector<WorkerType>& workers)
     ceph_assert(worker.get());
     worker->join();
   }
+}
+
+int RGWDedupManager::get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id)
+{
+  bufferlist result;
+  vector<pair<string, string>> options;
+  options.emplace_back(make_pair("format", "json"));
+  string cmd = create_cmd("service dump", options);
+
+  Rados* rados = store->getRados()->get_rados_handle();
+  if (rados->mgr_command(cmd, bufferlist(), &result, nullptr) < 0) {
+    ldpp_dout(dpp, 0) << __func__ << " mgr_command " << cmd << " failed" << dendl;
+    return -EACCES;
+  }
+
+  string dump = result.to_str();
+  JSONParser service_parser;
+  if (!service_parser.parse(dump.c_str(), dump.size())) {
+    return -1;
+  }
+
+  JSONFormattable f;
+  try {
+    decode_json_obj(f, &service_parser);
+  } catch (JSONDecoder::err& e) {
+    ldpp_dout(dpp, 2) << __func__ << " Failed to decode JSON object" << dendl;
+  }
+
+  if (!f.exists("services")) {
+    return -1;
+  }
+  if (!f["services"].exists("rgw")) {
+    return -1;
+  }
+  if (!f["services"]["rgw"].exists("daemons")) {
+    return -1;
+  }
+
+  uint64_t rgw_gid = rados->get_instance_id();
+  num_rgwdedups = f["services"]["rgw"]["daemons"].object().size();
+  int idx = 0;
+  for (const auto& [k, v] : f["services"]["rgw"]["daemons"].object()) {
+    if (!v.exists("metadata") || !v["metadata"].exists("pid")) {
+      --num_rgwdedups;
+      continue;
+    }
+
+    if (rgw_gid == std::stoull(k)) {
+      cur_id = idx;
+    }
+    ++idx;
+  }
+
+  // current RGWDedup not found in Ceph cluster
+  if (cur_id == num_rgwdedups) {
+    return -1;
+  }
+  return 0;
 }
 
 void* RGWDedupManager::entry()
@@ -127,6 +199,16 @@ void* RGWDedupManager::entry()
       }
     }
 
+    int num_rgwdedup, cur_rgwdedup_id;
+    if (get_multi_rgwdedup_info(num_rgwdedup, cur_rgwdedup_id) < 0) {
+      ldpp_dout(dpp, 2) << "current RGWDedup thread not found yet in Ceph Cluster."
+        << " Retry a few seconds later." << dendl;
+      sleep(RETRY_SLEEP_PERIOD);
+      continue;
+    }
+    ldpp_dout(dpp, 10) << "num rgwdedup: " << num_rgwdedup << ", cur rgwdedup id: "
+      << cur_rgwdedup_id << dendl;
+
     if (dedup_worked_cnt < dedup_scrub_ratio) {
       // do dedup
       if (perfcounter) {
@@ -136,6 +218,7 @@ void* RGWDedupManager::entry()
       fpmanager->reset_fpmap();
 
       update_base_pool_info();
+      prepare_worker(dedup_workers, num_rgwdedup, cur_rgwdedup_id);
       run_worker(dedup_workers, "DedupWorker_");
       wait_worker(dedup_workers);
       ++dedup_worked_cnt;
@@ -145,6 +228,7 @@ void* RGWDedupManager::entry()
         perfcounter->set(l_rgw_dedup_current_worker_mode, 2);
       }
 
+      prepare_worker(scrub_workers, num_rgwdedup, cur_rgwdedup_id);
       run_worker(scrub_workers, "ScrubWorker_");
       wait_worker(scrub_workers);
       dedup_worked_cnt = 0;
@@ -207,3 +291,4 @@ bool RGWDedupManager::get_down_flag()
 {
   return down_flag;
 }
+
