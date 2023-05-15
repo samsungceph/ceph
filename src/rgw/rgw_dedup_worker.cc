@@ -23,6 +23,12 @@ int Worker::get_id()
   return id;
 }
 
+void Worker::prepare(const int new_total_workers, const int new_gid)
+{
+  num_total_workers = new_total_workers;
+  gid = new_gid;
+}
+
 void Worker::clear_base_ioctx_map(uint64_t id, IoCtx& ioctx)
 {
   base_ioctx_map.clear();
@@ -177,9 +183,9 @@ void* RGWDedupWorker::entry()
     ObjectCursor shard_begin, shard_end;
 
     // get current worker's shard range of the base pool
-    base_ioctx.object_list_slice(pool_begin, pool_end, id, num_workers,
+    base_ioctx.object_list_slice(pool_begin, pool_end, gid, num_total_workers,
                                  &shard_begin, &shard_end);
-    ldpp_dout(dpp, 20) << "id/# workers: " << id << "/" << num_workers
+    ldpp_dout(dpp, 20) << "gid/# total workers: " << gid << "/" << num_total_workers
       << ", id: " << id << ", scan dir: " << obj_scan_dir << dendl;
 
     ObjectCursor obj_cursor = shard_begin;
@@ -493,7 +499,7 @@ void* RGWChunkScrubWorker::entry()
   ObjectCursor shard_begin, shard_end;
 
   // get current worker's shard range
-  cold_ioctx.object_list_slice(pool_begin, pool_end, id, num_workers,
+  cold_ioctx.object_list_slice(pool_begin, pool_end, gid, num_total_workers,
                                &shard_begin, &shard_end);
   ObjectCursor obj_cursor = shard_begin;
   uint32_t num_objs = 0;

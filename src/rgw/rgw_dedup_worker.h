@@ -27,8 +27,12 @@ protected:
   rgw::sal::RadosStore* store;
   bool is_run;
 
-  int id;
-  int num_workers;
+  // local worker id of a RGWDedup
+  int id = -1;
+  // # workers throughout total RGWDedups (# RGWDedup * # workers)
+  int num_total_workers = 0;
+  // global worker id throughout total RGWDedups
+  int gid = -1;
   map<uint64_t, IoCtx> base_ioctx_map;
   IoCtx cold_ioctx;
 
@@ -44,10 +48,9 @@ public:
          CephContext* _cct,
          rgw::sal::RadosStore* _store,
          int _id,
-         int _num_workers,
          IoCtx _cold_ioctx)
     : dpp(_dpp), cct(_cct), store(_store), is_run(false), id(_id),
-      num_workers(_num_workers), cold_ioctx(_cold_ioctx) {}
+      cold_ioctx(_cold_ioctx) {}
   Worker(const Worker& rhs) = delete;
   virtual ~Worker() {}
 
@@ -56,6 +59,7 @@ public:
 
   int get_id();
   void set_run(bool run_status);
+  void prepare(const int new_total_workers, const int new_gid);
   void clear_base_ioctx_map(uint64_t id, IoCtx& ioctx);
   void append_base_ioctx(uint64_t name, IoCtx& ioctx);
 };
@@ -76,14 +80,13 @@ public:
                  CephContext* _cct,
                  rgw::sal::RadosStore* _store,
                  int _id,
-                 int _num_workers,
                  shared_ptr<RGWFPManager> _fpmanager,
                  string _chunk_algo,
                  uint32_t _chunk_size,
                  string _fp_algo,
                  uint32_t _dedup_threshold,
                  IoCtx _cold_ioctx)
-    : Worker(_dpp, _cct, _store, _id, _num_workers, _cold_ioctx),
+    : Worker(_dpp, _cct, _store, _id, _cold_ioctx),
       obj_scan_dir(true),
       fpmanager(_fpmanager),
       chunk_algo(_chunk_algo),
@@ -134,9 +137,8 @@ public:
                       CephContext* _cct,
                       rgw::sal::RadosStore* _store,
                       int _id,
-                      int _num_workers,
                       IoCtx _cold_ioctx)
-    : Worker(_dpp, _cct, _store, _id, _num_workers, _cold_ioctx) {}
+    : Worker(_dpp, _cct, _store, _id, _cold_ioctx) {}
   RGWChunkScrubWorker(const RGWChunkScrubWorker& rhs) = delete;
   virtual ~RGWChunkScrubWorker() override {}
   

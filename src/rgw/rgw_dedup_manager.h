@@ -59,6 +59,8 @@ public:
   bool get_down_flag();
 
   bool need_scrub(const uint32_t dedup_worked_cnt);
+  void prepare_worker(const int rgwdedup_cnt, const int cur_rgwdedup_id,
+                      const uint32_t dedup_worked_cnt);
   void run_dedup(uint32_t& dedup_worked_cnt);
   void run_scrub(uint32_t& dedup_worked_cnt);
 
@@ -68,6 +70,7 @@ public:
                     const vector<pair<string, string>>& options);
   string create_osd_pool_set_cmd(const string prefix, const string base_pool,
                                  const string var, const string val);
+  int get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id);
 };
 
 #endif
