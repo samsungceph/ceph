@@ -47,11 +47,12 @@ int RGWDedupManager::initialize()
   return 0;
 }
 
-void RGWDedupManager::prepare_scrub()
+void RGWDedupManager::prepare_scrub(const int rgwdedup_cnt, const int cur_rgwdedup_id)
 {
-  for (uint32_t i = 0; i < scrub_workers.size(); ++i) {
-    ceph_assert(scrub_workers[i].get());
-    scrub_workers[i]->prepare(num_workers, i);
+  for (auto& worker : scrub_workers) {
+    ceph_assert(worker.get());
+    worker->prepare(rgwdedup_cnt * num_workers,
+        cur_rgwdedup_id * rgwdedup_cnt + worker->get_id());
   }
 }
 
@@ -86,6 +87,65 @@ void RGWDedupManager::update_base_pool_info()
   }
 }
 
+int RGWDedupManager::get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id)
+{
+  bufferlist result;
+  vector<pair<string, string>> options;
+  options.emplace_back(make_pair("format", "json"));
+  string cmd = create_cmd("service dump", options);
+
+  Rados* rados = store->getRados()->get_rados_handle();
+  if (rados->mgr_command(cmd, bufferlist(), &result, nullptr) < 0) {
+    ldpp_dout(dpp, 0) << __func__ << " mgr_command " << cmd << " failed" << dendl;
+    return -1;
+  }
+
+  string dump = result.to_str();
+  JSONParser service_parser;
+  if (!service_parser.parse(dump.c_str(), dump.size())) {
+    return -1;
+  }
+
+  JSONFormattable f;
+  try {
+    decode_json_obj(f, &service_parser);
+  } catch (JSONDecoder::err& e) {
+    ldpp_dout(dpp, 2) << __func__ << " Failed to decode JSON object" << dendl;
+  }
+
+  if (!f.exists("services")) {
+    return -1;
+  }
+
+  if (!f["services"].exists("rgw")) {
+    return -1;
+  }
+
+  if (!f["services"]["rgw"].exists("daemons")) {
+    return -1;
+  }
+
+  pid_t rgw_pid = getpid();
+  num_rgwdedups = f["services"]["rgw"]["daemons"].object().size();
+  int idx = 0;
+  for (const auto& [k, v] : f["services"]["rgw"]["daemons"].object()) {
+    if (!v.exists("metadata") || !v["metadata"].exists("pid") ) {
+      --num_rgwdedups;
+      continue;
+    }
+    if (rgw_pid == (int)v["metadata"]["pid"]) {
+      cur_id = idx;
+    }
+    ++idx;
+  }
+
+  // current RGWDedup not found in Ceph cluster
+  if (cur_id == num_rgwdedups) {
+    return -1;
+  }
+  return 0;
+}
+
 void* RGWDedupManager::entry()
 {
   ldpp_dout(dpp, 2) << "RGWDedupManager started" << dendl;
@@ -112,6 +172,16 @@ void* RGWDedupManager::entry()
       }
     }
 
+    int num_rgwdedup, cur_rgwdedup_id;
+    if (get_multi_rgwdedup_info(num_rgwdedup, cur_rgwdedup_id) < 0) {
+      ldpp_dout(dpp, 2) << "current RGWDedup thread not found yet in Ceph Cluster."
+        << " Retry a few seconds later." << dendl;
+      sleep(RETRY_SLEEP_PERIOD);
+      continue;
+    }
+    ldpp_dout(dpp, 10) << "num rgwdedup: " << num_rgwdedup << ", cur rgwdedup id: "
+      << cur_rgwdedup_id << dendl;
+
     update_base_pool_info(); 
     if (dedup_worked_cnt < dedup_scrub_ratio) {
       // dedup period
@@ -120,7 +190,7 @@ void* RGWDedupManager::entry()
       }
 
       // set dedup worker id
-      prepare_dedup();
+      prepare_dedup(num_rgwdedup, cur_rgwdedup_id);
 
       // trigger RGWDedupWorkers
       for (auto& worker : dedup_workers) {
@@ -143,7 +213,7 @@ void* RGWDedupManager::entry()
       }
 
       // set scrub worker id
-      prepare_scrub();
+      prepare_scrub(num_rgwdedup, cur_rgwdedup_id);
 
       // trigger RGWChunkScrubWorkers
       for (auto& worker : scrub_workers) {
@@ -213,11 +283,12 @@ string RGWDedupManager::create_osd_pool_set_cmd(const string prefix, const strin
   return create_cmd(prefix, options);
 }
 
-void RGWDedupManager::prepare_dedup()
+void RGWDedupManager::prepare_dedup(const int rgwdedup_cnt, const int cur_rgwdedup_id)
 {
-  for (uint32_t i = 0; i < dedup_workers.size(); ++i) {
-    ceph_assert(dedup_workers[i].get());
-    dedup_workers[i]->prepare(num_workers, i);
+  for (auto& worker : dedup_workers) {
+    ceph_assert(worker.get());
+    worker->prepare(rgwdedup_cnt * num_workers,
+        cur_rgwdedup_id * num_workers + worker->get_id());
   }
 }
 

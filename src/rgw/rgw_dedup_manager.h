@@ -73,14 +73,15 @@ public:
   int append_ioctxs(rgw_pool base_pool);
 
   // assign each worker's id
-  void prepare_dedup();
-  void prepare_scrub();
+  void prepare_dedup(const int rgwdedup_cnt, const int cur_rgwdedup_id);
+  void prepare_scrub(const int rgwdedup_cnt, const int cur_rgwdedup_id);
 
   string create_cmd(const string& prefix, const vector<pair<string, string>>& options);
   string create_osd_pool_set_cmd(const string prefix, const string base_pool,
                                  const string var, const string val);
 
   void update_base_pool_info();
+  int get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id);
 };
 
 #endif
