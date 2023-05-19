@@ -1576,7 +1576,7 @@ public:
 				      bool quota_threads,
 				      bool run_sync_thread,
 				      bool run_reshard_thread,
-                                      bool use_dedup_thread,
+              bool use_dedup_thread,
 				      bool use_cache = true,
 				      bool use_gc = true) {
     rgw::sal::Store* store = init_storage_provider(dpp, cct, cfg, use_gc_thread,

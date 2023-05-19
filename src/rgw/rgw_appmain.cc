@@ -221,7 +221,6 @@ void rgw::AppMain::init_storage()
           g_conf().get_val<bool>("rgw_dynamic_resharding"),
           g_conf()->rgw_enable_dedup_threads,
           g_conf()->rgw_cache_enabled);
-
 } /* init_storage */
 
 void rgw::AppMain::init_perfcounters()

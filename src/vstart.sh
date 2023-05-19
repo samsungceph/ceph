@@ -694,7 +694,7 @@ prepare_conf() {
         num ganesha = $GANESHA_DAEMON_NUM
 
 [global]
-        fsid = $(uuidgen)
+        fsid = 12341234-1234-1234-1234-123412341234
         osd failsafe full ratio = .99
         mon osd full ratio = .99
         mon osd nearfull ratio = .99
@@ -1597,8 +1597,8 @@ print('created new bucket')" > "$CEPH_OUT_DIR/$rgw_python_file"
 do_rgw_create_users()
 {
     # Create S3 user
-    s3_akey='0555b35654ad1656d804'
-    s3_skey='h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=='
+    s3_akey='1234'
+    s3_skey='1234'
     debug echo "setting up user testid"
     $CEPH_BIN/radosgw-admin user create --uid testid --access-key $s3_akey --secret $s3_skey --display-name 'M. Tester' --email tester@ceph.com -c $conf_fn > /dev/null
 
@@ -1682,6 +1682,7 @@ do_rgw()
             >> "$keyring_fn"
 
         debug echo start rgw on http${CEPH_RGW_HTTPS}://localhost:${current_port}
+        echo start rgw on http${CEPH_RGW_HTTPS}://localhost:${current_port}
         run 'rgw' $current_port $RGWSUDO $CEPH_BIN/radosgw -c $conf_fn \
             --log-file=${CEPH_OUT_DIR}/radosgw.${current_port}.log \
             --admin-socket=${CEPH_OUT_DIR}/radosgw.${current_port}.asok \

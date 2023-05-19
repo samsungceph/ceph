@@ -14,19 +14,14 @@
 
 const int RETRY_SLEEP_PERIOD = 10;
 const int DEDUP_INTERVAL = 3;
-const int DEFAULT_NUM_WORKERS = 3;
 const int MAX_OBJ_SCAN_SIZE = 100;
 const int MAX_BUCKET_SCAN_SIZE = 100;
 const uint32_t MAX_CHUNK_REF_SIZE = 10000;
-const int DEFAULT_DEDUP_SCRUB_RATIO = 10;
 const string DEFAULT_COLD_POOL_NAME = "default-cold-pool";
-const string DEFAULT_CHUNK_SIZE = "16384";
-const string DEFAULT_CHUNK_ALGO = "fastcdc";
-const string DEFAULT_FP_ALGO = "sha1";
 
 int RGWDedupManager::initialize()
 {
-  // create cold pool
+  // create cold pool if not exist
   Rados* rados = store->getRados()->get_rados_handle();
   IoCtx cold_ioctx;
   int ret = rgw_init_ioctx(dpp, rados, rgw_pool(cold_pool_name), cold_ioctx, true, false);
@@ -36,8 +31,16 @@ int RGWDedupManager::initialize()
     return ret;
   }
 
+  num_workers = cct->_conf->rgw_dedup_num_workers;
+  chunk_algo = cct->_conf->rgw_dedup_chunk_algo;
+  chunk_size = cct->_conf->rgw_dedup_chunk_size;
+  fp_algo = cct->_conf->rgw_dedup_fp_algo;
+  dedup_threshold = cct->_conf->rgw_dedup_threshold;
+  fpmanager_memory_limit = cct->_conf->rgw_dedup_fpmanager_memory_limit;
+  dedup_scrub_ratio = cct->_conf->rgw_dedup_scrub_ratio;
+
   // initialize components
-  fpmanager = make_shared<RGWFPManager>(chunk_algo, stoi(chunk_size), fp_algo);
+  fpmanager = make_shared<RGWFPManager>(chunk_algo, chunk_size, fp_algo, dedup_threshold, fpmanager_memory_limit);
 
   for (int i = 0; i < num_workers; ++i) {
     dedup_workers.emplace_back(
@@ -128,7 +131,7 @@ void RGWDedupManager::update_base_pool_info()
 void* RGWDedupManager::entry()
 {
   ldpp_dout(dpp, 2) << "RGWDedupManager started" << dendl;
-
+  
   while (!get_down_flag()) {
     if (perfcounter) {
       perfcounter->set(l_rgw_dedup_worker_count, num_workers);
@@ -140,7 +143,7 @@ void* RGWDedupManager::entry()
         perfcounter->set(l_rgw_dedup_chunk_algo, 2);
       }
       
-      perfcounter->set(l_rgw_dedup_chunk_size, stoi(chunk_size));
+      perfcounter->set(l_rgw_dedup_chunk_size, chunk_size);
       
       if (fp_algo == "sha1") {
         perfcounter->set(l_rgw_dedup_fp_algo, 1);
@@ -225,6 +228,7 @@ void RGWDedupManager::finalize()
     dedup_workers[i].reset();
     scrub_workers[i].reset();
   }
+  fpmanager.reset();
   dedup_workers.clear();
   scrub_workers.clear();
 }
@@ -292,7 +296,7 @@ void RGWDedupManager::set_dedup_tier(string base_pool_name)
   }
 
   cmd = create_osd_pool_set_cmd("osd pool set", base_pool_name,
-                                "dedup_cdc_chunk_size", chunk_size);
+                                "dedup_cdc_chunk_size", to_string(chunk_size));
   ldpp_dout(dpp, 0) << __func__ << " cmd: " << cmd << dendl;
   if (handle.mon_command(cmd, bufferlist(), nullptr, nullptr) < 0) {
     ldpp_dout(dpp, 0) << __func__ << " mon_command " << cmd << " failed" << dendl;

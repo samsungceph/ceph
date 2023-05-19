@@ -16,11 +16,6 @@ using namespace std;
 using namespace librados;
 
 extern const string DEFAULT_COLD_POOL_NAME;
-extern const string DEFAULT_CHUNK_SIZE;
-extern const string DEFAULT_CHUNK_ALGO;
-extern const string DEFAULT_FP_ALGO;
-extern const int DEFAULT_NUM_WORKERS;
-extern const int DEFAULT_DEDUP_SCRUB_RATIO;
 
 struct target_rados_object {
   string object_name;
@@ -44,11 +39,14 @@ class RGWDedupManager : public Thread
   vector<unique_ptr<RGWChunkScrubWorker>> scrub_workers;
 
   string cold_pool_name;
-  string chunk_size;
+  size_t num_workers;
   string chunk_algo;
+  size_t chunk_size;
   string fp_algo;
-  int num_workers;
-  int dedup_scrub_ratio;
+  size_t dedup_threshold;
+  size_t fpmanager_memory_limit;
+  size_t dedup_scrub_ratio;
+
   int dedup_worked_cnt;
   bool obj_scan_fwd;    // true: scan rados_objs forward, false: scan reverse
 
@@ -69,11 +67,6 @@ public:
                  rgw::sal::RadosStore* _store)
     : dpp(_dpp), cct(_cct), store(_store), down_flag(true),
       cold_pool_name(DEFAULT_COLD_POOL_NAME),
-      chunk_size(DEFAULT_CHUNK_SIZE),
-      chunk_algo(DEFAULT_CHUNK_ALGO),
-      fp_algo(DEFAULT_FP_ALGO),
-      num_workers(DEFAULT_NUM_WORKERS),
-      dedup_scrub_ratio(DEFAULT_DEDUP_SCRUB_RATIO),
       dedup_worked_cnt(0),
       obj_scan_fwd(true) {}
   virtual ~RGWDedupManager() override {}

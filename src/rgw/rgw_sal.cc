@@ -100,16 +100,15 @@ rgw::sal::Store* StoreManager::init_storage_provider(const DoutPrefixProvider* d
 						     bool quota_threads,
 						     bool run_sync_thread,
 						     bool run_reshard_thread,
+                 bool use_dedup,
 						     bool use_cache,
-						     bool use_gc,
-                                                     bool use_dedup)
+						     bool use_gc)
 {
   rgw::sal::Store* store{nullptr};
 
   if (cfg.store_name.compare("rados") == 0) {
     store = newStore();
     RGWRados* rados = static_cast<rgw::sal::RadosStore* >(store)->getRados();
-
     if ((*rados).set_use_cache(use_cache)
                 .set_use_datacache(false)
                 .set_use_gc(use_gc)

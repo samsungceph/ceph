@@ -24,7 +24,7 @@ ssize_t RGWFPManager::get_chunk_size()
   return chunk_size;
 }
 
-void RGWFPManager::set_chunk_size(ssize_t chunk_size)
+void RGWFPManager::set_chunk_size(size_t chunk_size)
 {
   ceph_assert(chunk_size > 0);
   chunk_size = chunk_size;
@@ -41,6 +41,17 @@ void RGWFPManager::set_fp_algo(string fp_algo)
   fp_algo = fp_algo;
 }
 
+ssize_t RGWFPManager::get_dedup_threshold()
+{
+  return dedup_threshold;
+}
+
+void RGWFPManager::set_dedup_threshold(size_t dedup_threshold)
+{
+  ceph_assert(dedup_threshold > 0);
+  dedup_threshold = dedup_threshold;
+}
+
 void RGWFPManager::reset_fpmap()
 {
   fp_map.clear();
@@ -51,19 +62,53 @@ ssize_t RGWFPManager::get_fpmap_size()
   return fp_map.size();
 }
 
-bool RGWFPManager::find(string& fingerprint)
+ssize_t RGWFPManager::find(string& fingerprint)
 {
   shared_lock lock(fingerprint_lock);
   auto found_item = fp_map.find(fingerprint);
-  return found_item != fp_map.end();
+  
+  if ( found_item != fp_map.end() ) {
+    return found_item->second;
+  } else {
+    return 0;
+  }
+}
+
+void RGWFPManager::check_memory_limit_and_do_evict()
+{
+  size_t current_memory;
+  if ( fp_algo == "sha1" ) {
+    current_memory = 24 * fp_map.size();
+  } else if ( fp_algo == "sha256" ) {
+    current_memory = 36 * fp_map.size();
+  } else if ( fp_algo == "sha512") {
+    current_memory = 68 * fp_map.size();
+  }
+  
+  if ( current_memory > memory_limit ) {
+    bool memory_freed = false;
+    int current_dedup_threshold = dedup_threshold;
+    while (!memory_freed && fp_map.size() > 0) {
+      for (auto iter = fp_map.begin(); iter != fp_map.end();) {
+        if (iter->second < current_dedup_threshold) {
+          iter = fp_map.erase(iter);
+          memory_freed = true;
+        } 
+      }
+      if ( !memory_freed ) {
+        current_dedup_threshold++;
+      }
+    }
+  }
 }
 
 void RGWFPManager::add(string& fingerprint)
 {
   unique_lock lock(fingerprint_lock);
   auto found_iter = fp_map.find(fingerprint);
-
+   
   if (found_iter == fp_map.end()) {
+    check_memory_limit_and_do_evict();
     fp_map.insert({fingerprint, 1});
   } else {
     ++found_iter->second;

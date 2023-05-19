@@ -81,7 +81,7 @@ void RGWDedupWorker::try_object_dedup(IoCtx& base_ioctx, Iter begin, Iter end)
       auto &chunk_data = get<0>(chunk);
       string fingerprint = generate_fingerprint(chunk_data, fp_algo);
       
-      if (fpmanager->find(fingerprint)) {
+      if (fpmanager->find(fingerprint) >= dedup_threshold) {
         std::pair<uint64_t, uint64_t> chunk_boundary = std::get<1>(chunk);
         chunk_t chunk_info = {
           .start = chunk_boundary.first,
@@ -369,7 +369,7 @@ int RGWDedupWorker::remove_object(IoCtx &ioctx, string object_name) {
 }
 
 vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> RGWDedupWorker::do_cdc(
-  bufferlist &data, string chunk_algo, ssize_t chunk_size)
+  bufferlist &data, string chunk_algo, size_t chunk_size)
 {
   vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> ret;
 

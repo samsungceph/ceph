@@ -75,8 +75,9 @@ class RGWDedupWorker : public Worker
   bool obj_scan_dir;    // true: scan obj forward, false: scan object reverse
   shared_ptr<RGWFPManager> fpmanager;
   string chunk_algo;
-  ssize_t chunk_size;
+  size_t chunk_size;
   string fp_algo;
+  size_t dedup_threshold;
 
 public:
   RGWDedupWorker(const DoutPrefixProvider* _dpp,
@@ -106,7 +107,7 @@ public:
   int remove_object(IoCtx &ioctx, string object_name);
   vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> do_cdc(bufferlist &data,
                                                              string chunk_algo,
-                                                             ssize_t chunk_size);
+                                                             size_t chunk_size);
   string generate_fingerprint(bufferlist chunk_data, string fp_algo);
 };
 
