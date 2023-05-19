@@ -313,6 +313,7 @@ DriverManager::Config DriverManager::get_config(bool admin, CephContext* cct)
 
   // Get the store backend
   const auto& config_store = g_conf().get_val<std::string>("rgw_backend_store");
+  std::cout << " config_store : " << config_store << std::endl;
   if (config_store == "rados") {
     cfg.store_name = "rados";
 

@@ -14,6 +14,7 @@
 auto cct = new CephContext(CEPH_ENTITY_TYPE_CLIENT);
 const DoutPrefix dp(cct, 1, "test rgw dedup: ");
 
+
 class RGWDedupTest : public ::testing::Test
 {
 protected:
@@ -33,7 +34,7 @@ public:
 
 TEST_F(RGWDedupTest, fpmanager_add)
 {
-  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("testchunkalgo", 16384, "testfpalgo");
+  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("testchunkalgo", 16384, "testfpalgo", 2, 1024);
 
   string teststring1 = "1234";
   string teststring2 = "5678";
@@ -55,7 +56,7 @@ TEST_F(RGWDedupTest, fpmanager_add)
 
 TEST_F(RGWDedupTest, fpmanager_find)
 {
-  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("testchunkalgo", 16384, "testfpalgo");
+  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("testchunkalgo", 16384, "testfpalgo", 2, 1024);
 
   string teststring1 = "1234";
   string teststring2 = "5678";
@@ -71,7 +72,7 @@ TEST_F(RGWDedupTest, fpmanager_find)
 
 TEST_F(RGWDedupTest, reset_fpmap)
 {
-  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("testchunkalgo", 16384, "testfpalgo");
+  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("testchunkalgo", 16384, "testfpalgo", 2, 1024);
 
   string teststring1 = "1234";
   string teststring2 = "5678";
@@ -87,8 +88,8 @@ TEST_F(RGWDedupTest, reset_fpmap)
 
 TEST_F(RGWDedupTest, generate_fingerprint)
 {
-  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("testchunkalgo", 16384, "testfpalgo");
-  RGWDedupWorker dedupworker(&dp, cct, &store, 1234, fpmanager);
+  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("testchunkalgo", 16384, "testfpalgo", 2, 1024);
+  RGWDedupWorker dedupworker(&dp, cct, &store, 1234, fpmanager, IoCtx());
 
   bufferlist data1;
   data1.append("");
@@ -117,6 +118,7 @@ TEST_F(RGWDedupTest, generate_fingerprint)
   EXPECT_EQ("40b4d8d9a012f401488b0d3175cda012310e544dca3697f72554986d3acdbb2afd045370547b8438e9f66c9bf2b52043ff9616da251632d178916f5e9f4b0a65",
               dedupworker.generate_fingerprint(data3, "sha512"));
 }
+
 
 int main (int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

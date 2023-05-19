@@ -287,7 +287,16 @@ int RGWDedupWorker::try_set_chunk(IoCtx& ioctx, IoCtx &cold_ioctx, string object
     chunk.fingerprint,
     0,
     CEPH_OSD_OP_FLAG_WITH_REFERENCE);
-  return ioctx.operate(object_name, &chunk_op, nullptr);
+  Rados* rados = store->getRados()->get_rados_handle();
+  AioCompletion* completion = rados->aio_create_completion();
+  ioctx.aio_operate(object_name, completion, &chunk_op, OPERATION_IGNORE_CACHE, NULL);
+
+  completion->wait_for_complete();
+  int ret = completion->get_return_value();
+
+  completion->release();
+  return ret;
+  //return ioctx.operate(object_name, &chunk_op, nullptr);
 }
 
 void RGWDedupWorker::do_chunk_dedup(IoCtx &ioctx,
@@ -407,6 +416,24 @@ string RGWDedupWorker::generate_fingerprint(
       break;
   }
   return string();
+}
+
+void RGWDedupWorker::set_chunk_size(uint32_t new_chunk_size)
+{
+  ceph_assert(new_chunk_size >= 4 && new_chunk_size <= 4194304);
+  chunk_size = new_chunk_size;
+}
+
+void RGWDedupWorker::set_chunk_algorithm(string new_chunk_algo)
+{
+  ceph_assert(new_chunk_algo == "fastcdc" || new_chunk_algo == "fixed");
+  chunk_algo = new_chunk_algo;
+}
+
+void RGWDedupWorker::set_fp_algorithm(string new_fp_algo)
+{
+  ceph_assert(new_fp_algo == "sha1" || new_fp_algo == "sha256" || new_fp_algo == "sha512");
+  fp_algo = new_fp_algo;
 }
 
 

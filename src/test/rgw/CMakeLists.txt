@@ -294,3 +294,20 @@ target_link_libraries(
   ${EXPAT_LIBRARIES}
   ${CMAKE_DL_LIBS}
 )
+
+# ceph_test_rgw_dedup
+add_executable(ceph_test_rgw_dedup rgwdedup_ut.cc)
+target_link_libraries(ceph_test_rgw_dedup
+  ${rgw_libs}
+  librados
+  radostest-cxx
+  global
+  test_rgw_a
+  #cls_rgw_client
+  ${UNITTEST_LIBS} 
+  #${EXPAT_LIBRARIES} ${CURL_LIBRARIES} ${CMAKE_DL_LIBS}
+  #cls_cas_internal
+  #Boost::system
+  #cls_cas_client
+  #spawn
+)
