@@ -162,16 +162,16 @@ Below we explain how to perform deduplication.
 
 .. code:: bash
 
-    ceph-dedup-tool --op estimate --pool $POOL --chunk-size chunk_size  
+    ceph-dedup-tool --op estimate --pool POOL --chunk-size CHUNK_SIZE  
       --chunk-algorithm fixed|fastcdc --fingerprint-algorithm sha1|sha256|sha512
       --max-thread THREAD_COUNT
 
 This CLI command will show how much storage space can be saved when deduplication
 is applied on the pool. If the amount of the saved space is higher than user's expectation,
 the pool probably is worth performing deduplication. 
-Users should specify $POOL where the object---the users want to perform
+Users should specify ``POOL`` where the object---the users want to perform
 deduplication---is stored. The users also need to run ceph-dedup-tool multiple time
-with varying ``chunk_size`` to find the optimal chunk size. Note that the
+with varying ``CHUNK_SIZE`` to find the optimal chunk size. Note that the
 optimal value probably differs in the content of each object in case of fastcdc
 chunk algorithm (not fixed). Example output:
 
@@ -196,7 +196,7 @@ chunk algorithm (not fixed). Example output:
 
 The above is an example output when executing ``estimate``. ``target_chunk_size`` is the same as
 ``chunk_size`` given by the user. ``dedup_bytes_ratio`` shows how many bytes are redundant from 
-examined bytes. For instance, 1 - ``dedup_bytes_ratio`` means the percentage of saved storage space.
+examined bytes. For instance, (1 - ``dedup_bytes_ratio``) * 100 means the percentage of saved storage space.
 ``dedup_object_ratio`` is the generated chunk objects / ``examined_objects``. ``chunk_size_average`` 
 means that the divided chunk size on average when performing CDC---this may differnet from ``target_chunk_size``
 because CDC genarates different chunk-boundary depending on the content. ``chunk_size_stddev``
@@ -227,13 +227,13 @@ If --loop is set, the theads will wakeup after ``WAKEUP_PERIOD``. If not, the th
 .. code:: bash
 
     ceph-dedup-tool --op object-dedup --pool POOL --object OID --chunk-pool CHUNK_POOL
-      --fingerprint-algorithm sha1|sha256|sha512 --dedup-cdc-chunk-size CHUNK_SIZE
+      --fingerprint-algorithm FP_ALGO --dedup-cdc-chunk-size CHUNK_SIZE
 
 The ``object-dedup`` command triggers deduplication on the RADOS object specified by ``OID``.
 All parameters shown above must be specified. ``CHUNK_SIZE`` should be taken from
 the results of step 1 above.
 Note that when this command is executed, ``fastcdc`` will be set by default and other parameters
-such as ``FP`` and ``CHUNK_SIZE`` will be set as defaults for the pool.
+such as ``FP_ALGO`` and ``CHUNK_SIZE`` will be set as defaults for the pool.
 Deduplicated objects will appear in the chunk pool. If the object is mutated over time, user needs to re-run
 ``object-dedup`` because chunk-boundary should be recalculated based on updated contents.
 The user needs to specify ``snap`` if the target object is snapshotted. After deduplication is done, the target
