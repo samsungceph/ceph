@@ -3828,3 +3828,11 @@ options:
   services:
   - rgw
   with_legacy: true
+- name: rgw_dedup_fpmanager_memory_limit
+  type: int
+  level: advanced
+  desc: FPManager memory limit for deduplication
+  default: 4294967296
+  services:
+  - rgw
+  with_legacy: true

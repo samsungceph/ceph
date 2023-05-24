@@ -35,9 +35,10 @@ int RGWDedupManager::initialize()
   fp_algo = cct->_conf->rgw_dedup_fp_algo;
   dedup_threshold = cct->_conf->rgw_dedup_threshold;
   dedup_scrub_ratio = cct->_conf->rgw_dedup_scrub_ratio;
+  fpmanager_memory_limit = cct->_conf->rgw_dedup_fpmanager_memory_limit;
 
   // initialize components
-  fpmanager = make_shared<RGWFPManager>(chunk_algo, chunk_size, fp_algo, dedup_threshold);
+  fpmanager = make_shared<RGWFPManager>(chunk_algo, chunk_size, fp_algo, dedup_threshold, fpmanager_memory_limit);
 
   for (int i = 0; i < num_workers; ++i) {
     dedup_workers.emplace_back(
