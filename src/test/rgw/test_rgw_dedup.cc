@@ -33,7 +33,7 @@ public:
 
 TEST_F(RGWDedupTest, fpmanager_add)
 {
-  RGWFPManager *fpmanager = new RGWFPManager("testchunkalgo", 1234, "sha1", 2);
+  RGWFPManager *fpmanager = new RGWFPManager("testchunkalgo", 1234, "sha1", 2, 1024);
 
   string teststring1 = "1234";
   string teststring2 = "5678";
@@ -55,7 +55,7 @@ TEST_F(RGWDedupTest, fpmanager_add)
 
 TEST_F(RGWDedupTest, fpmanager_find)
 {
-  RGWFPManager *fpmanager = new RGWFPManager("testchunkalgo", 1234, "sha1", 2);
+  RGWFPManager *fpmanager = new RGWFPManager("testchunkalgo", 1234, "sha1", 2, 1024);
 
   string teststring1 = "1234";
   string teststring2 = "5678";
@@ -71,7 +71,7 @@ TEST_F(RGWDedupTest, fpmanager_find)
 
 TEST_F(RGWDedupTest, reset_fpmap)
 {
-  RGWFPManager *fpmanager = new RGWFPManager("testchunkalgo", 1234, "sha1", 2);
+  RGWFPManager *fpmanager = new RGWFPManager("testchunkalgo", 1234, "sha1", 2, 1024);
 
   string teststring1 = "1234";
   string teststring2 = "5678";
@@ -88,7 +88,7 @@ TEST_F(RGWDedupTest, reset_fpmap)
 TEST_F(RGWDedupTest, generate_fingerprint)
 {
   IoCtx ioctx;
-  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("testchunkalgo", 16384, "sha1", 2);
+  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("testchunkalgo", 16384, "sha1", 2, 1024);
   RGWDedupWorker dedupworker(&dp, cct, &store, 1234, fpmanager, ioctx);
 
   bufferlist data1;

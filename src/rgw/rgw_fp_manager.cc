@@ -67,10 +67,38 @@ size_t RGWFPManager::find(string& fingerprint)
   shared_lock lock(fingerprint_lock);
   auto found_item = fp_map.find(fingerprint);
   
-  if ( found_item != fp_map.end() ) {
+  if (found_item != fp_map.end()) {
     return found_item->second;
   } else {
     return 0;
+  }
+}
+
+void RGWFPManager::check_memory_limit_and_do_evict()
+{
+  size_t current_memory = 0;
+  if (fp_algo == "sha1") {
+    current_memory = 24 * fp_map.size();
+  } else if (fp_algo == "sha256") {
+    current_memory = 36 * fp_map.size();
+  } else if (fp_algo == "sha512") {
+    current_memory = 68 * fp_map.size();
+  }
+
+  if (current_memory > memory_limit) {
+    bool memory_freed = false;
+    uint32_t current_dedup_threshold = dedup_threshold;
+    while (!memory_freed && fp_map.size() > 0) {
+      for (auto iter = fp_map.begin(); iter != fp_map.end();) {
+        if (iter->second < current_dedup_threshold) {
+          iter = fp_map.erase(iter);
+          memory_freed = true;
+        } 
+      }
+      if (!memory_freed) {
+        current_dedup_threshold++;
+      }
+    }
   }
 }
 
@@ -80,6 +108,7 @@ void RGWFPManager::add(string& fingerprint)
   auto found_iter = fp_map.find(fingerprint);
 
   if (found_iter == fp_map.end()) {
+    check_memory_limit_and_do_evict();
     fp_map.insert({fingerprint, 1});
   } else {
     ++found_iter->second;
