@@ -45,6 +45,7 @@ class RGWDedupManager : public Thread
   string fp_algo;
   uint32_t dedup_threshold;
   uint32_t dedup_scrub_ratio;
+  uint32_t fpmanager_memory_limit;
   
   uint32_t dedup_worked_cnt;
   bool obj_scan_fwd;    // true: scan rados_objs forward, false: scan reverse
