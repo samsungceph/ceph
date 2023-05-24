@@ -40,7 +40,9 @@ class RGWDedupManager : public Thread
   uint32_t dedup_threshold;
   uint32_t dedup_scrub_ratio;
   bool obj_scan_fwd;    // true: scan forward, false: scan reverse
-
+  uint64_t fpmanager_memory_limit;
+  uint32_t fpmanager_low_watermark;
+  
 public:
   RGWDedupManager(const DoutPrefixProvider* _dpp,
                   CephContext* _cct,

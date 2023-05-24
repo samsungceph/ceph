@@ -3901,4 +3901,19 @@ options:
   services:
   - rgw
   with_legacy: true
-
+- name: rgw_dedup_fpmanager_memory_limit
+  type: uint
+  level: advanced
+  desc: FPManager memory limit for deduplication
+  default: 4294967296
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_dedup_fpmanager_low_watermark
+  type: uint
+  level: advanced
+  desc: A low-watermark of fpmap in FPManager
+  default: 50
+  services:
+  - rgw
+  with_legacy: true
