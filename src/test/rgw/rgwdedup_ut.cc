@@ -145,6 +145,7 @@ TEST_F(RGWDedupUnitTest, test_data_consistency_after_dedup)
   worker.set_chunk_algorithm("fastcdc");
   worker.set_chunk_size(1024);
   worker.append_base_ioctx(ioctx.get_id(), ioctx);
+  worker.set_dedup_threshold(2);
 
   vector<string> fp_algos{"sha1", "sha256", "sha512"};
   for (auto fp_algo : fp_algos) {
@@ -245,57 +246,55 @@ TEST_F(RGWDedupUnitTest, test_data_consistency_after_dedup)
 
 TEST_F(RGWDedupUnitTest, chunk_obj_ref_size)
 {
-  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("fastcdc", 1024, "sha1", 2, 1024);
+  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("fastcdc", 1024, "sha1", 2, 16384);
   RGWDedupWorker worker(&dpp, cct, store, 0, fpmanager, cold_ioctx);
   worker.set_chunk_algorithm("fastcdc");
   worker.set_chunk_size(1024);
   worker.append_base_ioctx(ioctx.get_id(), ioctx);
   worker.set_fp_algorithm("sha1");
+  worker.set_dedup_threshold(2);
 
-  bufferlist data;
-  {
-    bufferlist tmpbl;
-    generate_buffer(1024, &tmpbl);
-    for (int i = 0; i < 4 * 1024; ++i) {
-      data.append(tmpbl);
-    }
+  bufferlist data, tmpbl;
+  generate_buffer(1024, &tmpbl);
+  for (int i = 0; i < 4 * 1024; ++i) {
+    data.append(tmpbl);
   }
-  cout << "data size: " << data.length() << std::endl;
 
   // create objects which have chunks larger than MAX_REF_CHUNK_SIZE
-  {
-    string obj_name = "dup-a-lot-obj-";
-    for (int i = 0; i < 5; ++i) {
-      ObjectWriteOperation wop;
-      wop.write_full(data);
-      ASSERT_EQ(ioctx.operate(obj_name + to_string(i), &wop), 0);
-    }
+  // these objects contain about 1280 same chunks
+  string obj_name = "dup-a-lot-obj-";
+  for (int i = 0; i < 5; ++i) {
+    ObjectWriteOperation wop;
+    wop.write_full(data);
+    ASSERT_EQ(ioctx.operate(obj_name + to_string(i), &wop), 0);
   }
 
-  ObjectCursor cursor = ioctx.object_list_begin();
-  ObjectCursor shard_start, shard_end;
-  ioctx.object_list_slice(ioctx.object_list_begin(), ioctx.object_list_end(),
-                          0, 1, &shard_start, &shard_end);
+  //ObjectCursor shard_start, shard_end;
+  //ioctx.object_list_slice(ioctx.object_list_begin(), ioctx.object_list_end(),
+                          //0, 1, &shard_start, &shard_end);
   cout << "base pool after write objs" << std::endl;
-  while (cursor < shard_end) {
+  //while (cursor < shard_end) {
+  {
+    ObjectCursor cursor;
     vector<ObjectItem> objs;
-    ASSERT_GE(ioctx.object_list(cursor, shard_end, 100, {}, &objs, &cursor), 0);
+    ASSERT_GE(ioctx.object_list(ioctx.object_list_begin(), ioctx.object_list_end(), 100, {}, &objs, &cursor), 0);
     worker.try_object_dedup(ioctx, objs.begin(), objs.end());
     for (auto& obj : objs) {
       cout << "obj: " << obj.oid << std::endl;
     }
   }
+  //}
 
 
-  cursor = cold_ioctx.object_list_begin();
-  cold_ioctx.object_list_slice(cold_ioctx.object_list_begin(),
-                               cold_ioctx.object_list_end(),
-                               0, 1, &shard_start, &shard_end);
+  //cursor = cold_ioctx.object_list_begin();
+  //cold_ioctx.object_list_slice(cold_ioctx.object_list_begin(),
+                               //cold_ioctx.object_list_end(),
+                               //0, 1, &shard_start, &shard_end);
   cout << "MAX_CHUNK_REF_SIZE: " << MAX_CHUNK_REF_SIZE << std::endl;
   cout << "cold pool after dedup" << std::endl;
-  while (cursor < shard_end) {
+  {
     vector<ObjectItem> objs;
-    ASSERT_GE(cold_ioctx.object_list(cursor, shard_end, 100, {}, &objs, &cursor), 0);
+    ASSERT_GE(cold_ioctx.object_list(cold_ioctx.object_list_begin(), cold_ioctx.object_list_end(), 100, {}, &objs, &cursor), 0);
     for (auto& obj : objs) {
       cout << "obj: " << obj.oid << std::endl;
       chunk_refs_t refs;
@@ -303,21 +302,36 @@ TEST_F(RGWDedupUnitTest, chunk_obj_ref_size)
       chunk_refs_by_object_t* chunk_refs
          = static_cast<chunk_refs_by_object_t*>(refs.r.get());
       cout << "obj: " << obj.oid << " ref cnt: " << chunk_refs->by_object.size() << std::endl;
-      ASSERT_LE(chunk_refs->by_object.size(), 10000); 
+      ASSERT_LE(chunk_refs->by_object.size(), MAX_CHUNK_REF_SIZE); 
     }
   }
-  
-  //worker.get_chunk_refs(cold_ioctx, 
 }
 
 TEST_F(RGWDedupUnitTest, scrub_test)
 {
-  RGWChunkScrubWorker worker(&dpp, cct, store, 0, cold_ioctx);
+  RGWChunkScrubWorker scrub_worker(&dpp, cct, store, 0, cold_ioctx);
+  shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("fastcdc", 1024, "sha1", 2, 1024);
+  RGWDedupWorker worker(&dpp, cct, store, 0, fpmanager, cold_ioctx);
+  worker.set_chunk_algorithm("fastcdc");
+  worker.set_chunk_size(1024);
+  worker.append_base_ioctx(ioctx.get_id(), ioctx);
+  worker.set_fp_algorithm("sha1");
+  worker.set_dedup_threshold(2);
 
   // create object
+  bufferlist data;
+  generate_buffer(1024 * 1024, &data);
+  cout << "data size: " << data.length() << std::endl;
   
+  ObjectWriteOperation wop;
+  wop.write_full(data);
+  ASSERT_EQ(ioctx.operate("metadata-obj", &wop), 0);
 
   // dedup objects
+  ObjectCursor cursor;
+  vector<ObjectItem> objs;
+  ASSERT_GE(ioctx.object_list(ioctx.object_list_begin(), ioctx.object_list_end(), 100, {}, &objs, &cursor), 0);
+  worker.try_object_dedup(ioctx, objs.begin(), objs.end());
   
   
   // check the number of chunk objects' references
