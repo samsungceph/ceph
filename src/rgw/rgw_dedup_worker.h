@@ -117,6 +117,7 @@ public:
   void set_chunk_algorithm(string new_chunk_algo);
   void set_chunk_size(uint32_t new_chunk_size);
   void set_fp_algorithm(string new_fp_algo);
+  void set_dedup_threshold(uint32_t new_dedup_threshold);
 };
 
 class RGWChunkScrubWorker : public Worker

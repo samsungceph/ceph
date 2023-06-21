@@ -436,6 +436,12 @@ void RGWDedupWorker::set_fp_algorithm(string new_fp_algo)
   fp_algo = new_fp_algo;
 }
 
+void RGWDedupWorker::set_dedup_threshold(uint32_t new_dedup_threshold)
+{
+  ceph_assert(new_dedup_threshold > 0);
+  dedup_threshold = new_dedup_threshold;
+}
+
 
 int RGWChunkScrubWorker::do_chunk_repair(IoCtx& cold_ioctx,
 					 const string chunk_obj_name,
