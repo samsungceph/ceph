@@ -302,7 +302,6 @@ int RGWDedupWorker::try_set_chunk(IoCtx& ioctx, IoCtx &cold_ioctx, string object
 void RGWDedupWorker::do_chunk_dedup(IoCtx &ioctx,
                                     IoCtx &cold_ioctx,
                                     string object_name, list<chunk_t> redundant_chunks) {
-  cout << __func__ << " max_chunk_ref_size: " << MAX_CHUNK_REF_SIZE << std::endl;
   for (auto chunk : redundant_chunks) {
     if (check_object_exists(cold_ioctx, chunk.fingerprint) < 0) {
       int ret = write_object_data(cold_ioctx, chunk.fingerprint, chunk.data);
@@ -325,9 +324,8 @@ void RGWDedupWorker::do_chunk_dedup(IoCtx &ioctx,
       chunk_refs_by_object_t* chunk_refs
         = static_cast<chunk_refs_by_object_t*>(refs.r.get());
 
-      cout << __func__ << " chunk: " << chunk.fingerprint << " skip cur refcnt; " << chunk_refs->by_object.size() << std::endl;
       // # refs of chunk object must be less than MAX_CHUNK_REF_SIZE
-      if (chunk_refs->by_object.size() >= MAX_CHUNK_REF_SIZE) {
+      if (chunk_refs->by_object.size() >= max_chunk_ref_size) {
         continue;
       }
     }
@@ -442,6 +440,17 @@ void RGWDedupWorker::set_dedup_threshold(uint32_t new_dedup_threshold)
 {
   ceph_assert(new_dedup_threshold > 0);
   dedup_threshold = new_dedup_threshold;
+}
+
+void RGWDedupWorker::set_max_chunk_ref_size(uint32_t new_max_chunk_ref_size)
+{
+  ceph_assert(new_max_chunk_ref_size > 0);
+  max_chunk_ref_size = new_max_chunk_ref_size;
+}
+
+uint32_t RGWDedupWorker::get_max_chunk_ref_size()
+{
+  return max_chunk_ref_size;
 }
 
 

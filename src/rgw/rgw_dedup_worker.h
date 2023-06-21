@@ -79,6 +79,7 @@ class RGWDedupWorker : public Worker
   size_t chunk_size;
   string fp_algo;
   size_t dedup_threshold;
+  uint32_t max_chunk_ref_size;
 
 public:
   RGWDedupWorker(const DoutPrefixProvider* _dpp,
@@ -89,7 +90,8 @@ public:
                  IoCtx _cold_ioctx)
     : Worker(_dpp, _cct, _store, _id, _cold_ioctx),
       obj_scan_dir(true),
-      fpmanager(_fpmanager) {}
+      fpmanager(_fpmanager),
+      max_chunk_ref_size(MAX_CHUNK_REF_SIZE) {}
   virtual ~RGWDedupWorker() override {}
 
   virtual void* entry() override;
@@ -118,6 +120,8 @@ public:
   void set_chunk_size(uint32_t new_chunk_size);
   void set_fp_algorithm(string new_fp_algo);
   void set_dedup_threshold(uint32_t new_dedup_threshold);
+  void set_max_chunk_ref_size(uint32_t new_max_chunk_ref_size);
+  uint32_t get_max_chunk_ref_size();
 };
 
 class RGWChunkScrubWorker : public Worker
