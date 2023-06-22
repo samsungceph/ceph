@@ -36,7 +36,7 @@ void Worker::clear_base_ioctx_map()
   base_ioctx_map.clear();
 }
 
-void Worker::append_base_ioctx(uint64_t id, IoCtx& ioctx)
+void Worker::append_base_ioctx(int64_t id, IoCtx& ioctx)
 {
   base_ioctx_map.emplace(id, ioctx);
 }
@@ -81,7 +81,7 @@ void RGWDedupWorker::try_object_dedup(IoCtx& base_ioctx, Iter begin, Iter end)
       auto &chunk_data = get<0>(chunk);
       string fingerprint = generate_fingerprint(chunk_data, fp_algo);
       
-      if (fpmanager->find(fingerprint) >= dedup_threshold) {
+      if (dedup_threshold == 1 || fpmanager->find(fingerprint) >= dedup_threshold) {
         std::pair<uint64_t, uint64_t> chunk_boundary = std::get<1>(chunk);
         chunk_t chunk_info = {
           .start = chunk_boundary.first,
@@ -287,16 +287,7 @@ int RGWDedupWorker::try_set_chunk(IoCtx& ioctx, IoCtx &cold_ioctx, string object
     chunk.fingerprint,
     0,
     CEPH_OSD_OP_FLAG_WITH_REFERENCE);
-  Rados* rados = store->getRados()->get_rados_handle();
-  AioCompletion* completion = rados->aio_create_completion();
-  ioctx.aio_operate(object_name, completion, &chunk_op, OPERATION_IGNORE_CACHE, NULL);
-
-  completion->wait_for_complete();
-  int ret = completion->get_return_value();
-
-  completion->release();
-  return ret;
-  //return ioctx.operate(object_name, &chunk_op, nullptr);
+  return ioctx.operate(object_name, &chunk_op, nullptr);
 }
 
 void RGWDedupWorker::do_chunk_dedup(IoCtx &ioctx,

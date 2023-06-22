@@ -84,16 +84,21 @@ void RGWFPManager::check_memory_limit_and_do_evict()
   } else if (fp_algo == "sha512") {
     current_memory = 68 * fp_map.size();
   }
+  cout << __func__ << " threshold: " << dedup_threshold << ", cur memory: " << current_memory << ", size: " << fp_map.size() << std::endl;
 
   if (current_memory > memory_limit) {
     bool memory_freed = false;
     int current_dedup_threshold = dedup_threshold;
     while (!memory_freed && fp_map.size() > 0) {
-      for (auto iter = fp_map.begin(); iter != fp_map.end();) {
+      for (auto iter = fp_map.begin(), end = fp_map.end(); iter != end;) {
+        cout << __func__ << " iter: " << &iter << ", fp: " << iter->first << ", cnt: " << iter->second << std::endl;
         if (iter->second < current_dedup_threshold) {
           iter = fp_map.erase(iter);
           memory_freed = true;
-        } 
+        } else {
+          ++iter;
+        }
+        cout << __func__ << " size: " << fp_map.size() << std::endl;
       }
       if (!memory_freed) {
         current_dedup_threshold++;

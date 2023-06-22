@@ -36,7 +36,7 @@ protected:
   int num_total_workers = 0;
   // global worker id throughout total RGWDedups
   int gid = -1;
-  map<uint64_t, IoCtx> base_ioctx_map;
+  map<int64_t, IoCtx> base_ioctx_map;
   IoCtx cold_ioctx;
 
 public:
@@ -57,7 +57,7 @@ public:
   void set_run(bool run_status);
   void prepare(const int new_total_workers, const int new_gid);
   void clear_base_ioctx_map();
-  void append_base_ioctx(uint64_t name, IoCtx& ioctx);
+  void append_base_ioctx(int64_t name, IoCtx& ioctx);
 
   // get references of chunk object
   int get_chunk_refs(IoCtx& chunk_ioctx, const string& chunk_oid, chunk_refs_t& refs);
