@@ -27,6 +27,7 @@ public:
   void set_dedup_threshold(size_t dedup_threshold);
   void reset_fpmap();
   ssize_t get_fpmap_size();
+  uint32_t get_fpmap_memory_size();
 private:
   std::shared_mutex fingerprint_lock;
   string chunk_algo;

@@ -60,6 +60,7 @@ protected:
     cold_ioctx.application_enable("rados", true);
     cold_ioctx.set_namespace(nspace);
 
+    /*
     store = new rgw::sal::RadosStore();
     ASSERT_NE(store, nullptr);
     RGWRados* rados = new RGWRados();
@@ -68,6 +69,7 @@ protected:
     ASSERT_NE(rados, nullptr);
     store->setRados(rados);
     rados->set_store(store);
+    */
   }
   void TearDown() override {
     // wait for maps to settle before next test
@@ -132,7 +134,6 @@ void read_deduped_data(
   }
 }
 
-/*
 // RGWDedupWorker test
 #include "cls/cas/cls_cas_internal.h"
 TEST_F(RGWDedupUnitTest, test_data_consistency_after_dedup)
@@ -185,7 +186,8 @@ TEST_F(RGWDedupUnitTest, test_data_consistency_after_dedup)
     string chunk_obj_checksum = worker.generate_fingerprint(chunk_data, fp_algo);
     ASSERT_NE(chunk_obj_checksum, string());
     ASSERT_EQ(metadata_obj_checksum, chunk_obj_checksum);
-    cout << "meta obj cs: " << metadata_obj_checksum << ", chunk obj cs: " << chunk_obj_checksum << std::endl;
+    cout << "checksum of metadata object: " << metadata_obj_checksum << std::endl;
+    cout << "checksum of total chunk objs: " << chunk_obj_checksum << std::endl;
 
     // reset variables
     og_data.clear();
@@ -238,18 +240,28 @@ TEST_F(RGWDedupUnitTest, test_data_consistency_after_dedup)
     chunk_obj_checksum = worker.generate_fingerprint(chunk_data, fp_algo);
     ASSERT_NE(chunk_obj_checksum, string());
     ASSERT_EQ(metadata_obj_checksum, chunk_obj_checksum);
-    cout << "meta obj cs: " << metadata_obj_checksum << ", chunk obj cs: " << chunk_obj_checksum << std::endl;
+    cout << "checksum of metadata objects: " << metadata_obj_checksum << std::endl;
+    cout << "checksum of total chunk objects: " << chunk_obj_checksum << std::endl;
 
     // clear objects in base-pool and cold-pool
     cleanup_default_namespace(ioctx);
     cleanup_namespace(ioctx, nspace);
     cleanup_default_namespace(cold_ioctx);
-    cleanup_namespace(cold_ioctx, nspace);
+    //cleanup_namespace(cold_ioctx, nspace);
   }
 }
 
 TEST_F(RGWDedupUnitTest, chunk_obj_ref_size)
 {
+  store = new rgw::sal::RadosStore();
+  ASSERT_NE(store, nullptr);
+  RGWRados* rados = new RGWRados();
+  rados->set_context(cct);
+  rados->init_rados();
+  ASSERT_NE(rados, nullptr);
+  store->setRados(rados);
+  rados->set_store(store);
+
   shared_ptr<RGWFPManager> fpmanager = make_shared<RGWFPManager>("fastcdc", 1024, "sha1", 2, 16 * 1024);
   RGWDedupWorker worker(&dpp, cct, store, 0, fpmanager, cold_ioctx);
   worker.set_chunk_algorithm("fastcdc");
@@ -293,8 +305,7 @@ TEST_F(RGWDedupUnitTest, chunk_obj_ref_size)
       << obj.oid << ") refcnt: " << chunk_refs->by_object.size() << std::endl;
   }
 }
-*/
-/*
+
 string get_target_chunk_oid(const map<string, uint32_t>& chunk_ref_cnt_map)
 {
   random_device rd;
@@ -428,36 +439,55 @@ TEST_F(RGWDedupUnitTest, scrub_test)
     ASSERT_EQ(dummy_ref_injected_oid_ref_cnt, chunk_refs->by_object.size());
   }
 }
-*/
 
-TEST_F(RGWDedupUnitTest, fpmap_size_test)
+TEST_F(RGWDedupUnitTest, fpmap_memory_size_test)
 {
-  RGWFPManager fpmanager("fastcdc", 1024, "sha1", 2, 1024);
+  // limit fpmanager memory size upto 2048 bytes
+  RGWFPManager fpmanager("fastcdc", 1024, "sha1", 2, 2048);
   RGWDedupWorker worker(&dpp, cct, store, 0, nullptr, cold_ioctx);
 
   vector<string> fp_algos = {"sha1", "sha256", "sha512"};
-  
   for (const auto& fp_algo : fp_algos) {
-    // create object
+    fpmanager.reset_fpmap();
     bufferlist data;
-    time_t curtime = time(0);
-    generate_buffer(4 * 1024 * 1024, &data, curtime);
-    
-    for (int i = 0; i < 5; i++) {
-      ObjectWriteOperation wop;
-      wop.write_full(data);
-      ASSERT_EQ(ioctx.operate("metadata-obj-" + to_string(i) + "-" + fp_algo, &wop), 0);
+    {
+      time_t curtime = time(0);
+      generate_buffer(8 * 1024, &data, curtime);
+    }
 
-      // get chunk map in order to get a sequence of chunks
-      auto chunks = worker.do_cdc(data, "fastcdc", 1024);
-      unordered_map<string, uint32_t> chunk_map;
-      get_chunk_map(chunks, &worker, fp_algo, chunk_map);
+    auto dup_chunks = worker.do_cdc(data, "fastcdc", 1024);
+    uint32_t dup_chunk_cnt = dup_chunks.size();
 
-      for (const auto& chunk : chunks) {
+    // make current chunks' fp duplicated
+    for (int i = 0; i < 2; i++) {
+      for (const auto& chunk : dup_chunks) {
         string fp = worker.generate_fingerprint(get<0>(chunk), fp_algo);
         fpmanager.add(fp);
-        cout << " fp: " << fp << ", cnt: " << fpmanager.find(fp) << std::endl;
       }
     }
+    ASSERT_EQ(fpmanager.get_fpmap_size(), dup_chunk_cnt);
+
+    // add unique objects' chunks
+    for (int i = 1; i <= 5; i++) {
+      data.clear();
+      {
+        time_t curtime = time(0);
+        generate_buffer(16 * 1024, &data, curtime + i);
+      }
+
+      auto unique_chunks = worker.do_cdc(data, "fastcdc", 1024);
+      uint32_t unique_chunk_cnt = unique_chunks.size();
+
+      for (const auto& chunk : unique_chunks) {
+        string fp = worker.generate_fingerprint(get<0>(chunk), fp_algo);
+        fpmanager.add(fp);
+      }
+    }
+
+    /** call once again because add() inserts a fp value
+     *  into fpmap after check_memory_limit_and_do_evict()
+     */
+    fpmanager.check_memory_limit_and_do_evict();
+    ASSERT_LE(fpmanager.get_fpmap_memory_size(), 2048);
   }
 }

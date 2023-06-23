@@ -62,6 +62,14 @@ ssize_t RGWFPManager::get_fpmap_size()
   return fp_map.size();
 }
 
+uint32_t RGWFPManager::get_fpmap_memory_size()
+{
+  if (fp_map.size() == 0) {
+    return 0;
+  }
+  return fp_map.size() * (fp_map.begin()->first.length() + sizeof(fp_map.begin()->second));
+}
+
 ssize_t RGWFPManager::find(string& fingerprint)
 {
   shared_lock lock(fingerprint_lock);
@@ -76,29 +84,19 @@ ssize_t RGWFPManager::find(string& fingerprint)
 
 void RGWFPManager::check_memory_limit_and_do_evict()
 {
-  size_t current_memory;
-  if (fp_algo == "sha1") {
-    current_memory = 24 * fp_map.size();
-  } else if (fp_algo == "sha256") {
-    current_memory = 36 * fp_map.size();
-  } else if (fp_algo == "sha512") {
-    current_memory = 68 * fp_map.size();
-  }
-  cout << __func__ << " threshold: " << dedup_threshold << ", cur memory: " << current_memory << ", size: " << fp_map.size() << std::endl;
+  uint32_t  current_memory = get_fpmap_memory_size();
 
   if (current_memory > memory_limit) {
     bool memory_freed = false;
     int current_dedup_threshold = dedup_threshold;
     while (!memory_freed && fp_map.size() > 0) {
-      for (auto iter = fp_map.begin(), end = fp_map.end(); iter != end;) {
-        cout << __func__ << " iter: " << &iter << ", fp: " << iter->first << ", cnt: " << iter->second << std::endl;
+      for (auto iter = fp_map.begin(); iter != fp_map.end();) {
         if (iter->second < current_dedup_threshold) {
           iter = fp_map.erase(iter);
           memory_freed = true;
         } else {
           ++iter;
         }
-        cout << __func__ << " size: " << fp_map.size() << std::endl;
       }
       if (!memory_freed) {
         current_dedup_threshold++;
