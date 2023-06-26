@@ -19,7 +19,7 @@ void RGWFPManager::set_chunk_algo(string chunk_algo)
   chunk_algo = chunk_algo;
 }
 
-ssize_t RGWFPManager::get_chunk_size()
+uint32_t RGWFPManager::get_chunk_size()
 {
   return chunk_size;
 }
@@ -57,7 +57,7 @@ void RGWFPManager::reset_fpmap()
   fp_map.clear();
 }
 
-ssize_t RGWFPManager::get_fpmap_size()
+size_t RGWFPManager::get_fpmap_size()
 {
   return fp_map.size();
 }
@@ -70,7 +70,7 @@ uint32_t RGWFPManager::get_fpmap_memory_size()
   return fp_map.size() * (fp_map.begin()->first.length() + sizeof(fp_map.begin()->second));
 }
 
-ssize_t RGWFPManager::find(string& fingerprint)
+size_t RGWFPManager::find(string& fingerprint)
 {
   shared_lock lock(fingerprint_lock);
   auto found_item = fp_map.find(fingerprint);
@@ -88,7 +88,7 @@ void RGWFPManager::check_memory_limit_and_do_evict()
 
   if (current_memory > memory_limit) {
     bool memory_freed = false;
-    int current_dedup_threshold = dedup_threshold;
+    uint32_t current_dedup_threshold = dedup_threshold;
     while (!memory_freed && fp_map.size() > 0) {
       for (auto iter = fp_map.begin(); iter != fp_map.end();) {
         if (iter->second < current_dedup_threshold) {

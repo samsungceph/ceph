@@ -76,9 +76,9 @@ class RGWDedupWorker : public Worker
   shared_ptr<RGWFPManager> fpmanager;
   vector<target_rados_object> rados_objs;
   string chunk_algo;
-  size_t chunk_size;
+  uint32_t chunk_size;
   string fp_algo;
-  size_t dedup_threshold;
+  uint32_t dedup_threshold;
   uint32_t max_chunk_ref_size;
 
 public:
@@ -98,7 +98,6 @@ public:
   virtual void finalize() override;
 
   void append_obj(target_rados_object new_obj);
-  size_t get_num_objs();
   void clear_objs();
 
   template <typename Iter>
@@ -114,7 +113,7 @@ public:
   int remove_object(IoCtx &ioctx, string object_name);
   vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> do_cdc(bufferlist &data,
                                                              string chunk_algo,
-                                                             size_t chunk_size);
+                                                             uint32_t chunk_size);
   string generate_fingerprint(bufferlist chunk_data, string fp_algo);
   void set_chunk_algorithm(string new_chunk_algo);
   void set_chunk_size(uint32_t new_chunk_size);

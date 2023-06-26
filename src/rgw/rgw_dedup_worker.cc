@@ -230,7 +230,7 @@ void RGWDedupWorker::finalize()
 bufferlist RGWDedupWorker::read_object_data(IoCtx& ioctx, string object_name)
 {
   bufferlist whole_data;
-  size_t offset = 0;
+  uint64_t offset = 0;
   int ret = -1;
 
   while (ret != 0) {
@@ -373,7 +373,7 @@ int RGWDedupWorker::remove_object(IoCtx &ioctx, string object_name) {
 }
 
 vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> RGWDedupWorker::do_cdc(
-  bufferlist &data, string chunk_algo, size_t chunk_size)
+  bufferlist &data, string chunk_algo, uint32_t chunk_size)
 {
   vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> ret;
 

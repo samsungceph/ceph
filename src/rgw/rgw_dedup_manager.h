@@ -39,13 +39,13 @@ class RGWDedupManager : public Thread
   vector<unique_ptr<RGWChunkScrubWorker>> scrub_workers;
 
   string cold_pool_name;
-  size_t num_workers;
+  int num_workers;
   string chunk_algo;
-  size_t chunk_size;
+  int chunk_size;
   string fp_algo;
-  size_t dedup_threshold;
-  size_t dedup_scrub_ratio;
-  size_t fpmanager_memory_limit;
+  int dedup_threshold;
+  int dedup_scrub_ratio;
+  int fpmanager_memory_limit;
   
   int dedup_worked_cnt;
   bool obj_scan_fwd;    // true: scan rados_objs forward, false: scan reverse
