@@ -33,6 +33,7 @@ class RGWDedupManager : public Thread
   rgw::sal::RadosStore* store;
   bool down_flag;
   vector<target_rados_object> rados_objs;
+  Rados* rados;
 
   shared_ptr<RGWFPManager> fpmanager;
   vector<unique_ptr<RGWDedupWorker>> dedup_workers;
@@ -57,6 +58,7 @@ public:
                  CephContext* _cct,
                  rgw::sal::RadosStore* _store)
     : dpp(_dpp), cct(_cct), store(_store), down_flag(true),
+      rados(nullptr),
       cold_pool_name(DEFAULT_COLD_POOL_NAME),
       dedup_worked_cnt(0),
       obj_scan_fwd(true) {}
@@ -81,7 +83,8 @@ public:
                                  const string var, const string val);
 
   void update_base_pool_info();
-  int get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id);
+  template<class RadosClass>
+  int get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id, RadosClass* rados);
 };
 
 #endif

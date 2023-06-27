@@ -20,7 +20,7 @@ const string DEFAULT_COLD_POOL_NAME = "default-cold-pool";
 int RGWDedupManager::initialize()
 {
   // create cold pool if not exist
-  Rados* rados = store->getRados()->get_rados_handle();
+  rados = store->getRados()->get_rados_handle();
   IoCtx cold_ioctx;
   int ret = rgw_init_ioctx(dpp, rados, rgw_pool(cold_pool_name), cold_ioctx, true, false);
   if (ret < 0) {
@@ -59,7 +59,7 @@ void RGWDedupManager::prepare_scrub(const int rgwdedup_cnt, const int cur_rgwded
 }
 
 string RGWDedupManager::create_cmd(const string& prefix,
-                                       const vector<pair<string, string>>& options)
+                                   const vector<pair<string, string>>& options)
 {
   ceph_assert(!prefix.empty());
 
@@ -89,18 +89,21 @@ void RGWDedupManager::update_base_pool_info()
   }
 }
 
-int RGWDedupManager::get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id)
+template<class RadosClass>
+int RGWDedupManager::get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id, RadosClass* rados)
 {
+  ceph_assert(rados);
+
   bufferlist result;
   vector<pair<string, string>> options;
   options.emplace_back(make_pair("format", "json"));
   string cmd = create_cmd("service dump", options);
 
-  Rados* rados = store->getRados()->get_rados_handle();
   if (rados->mgr_command(cmd, bufferlist(), &result, nullptr) < 0) {
     ldpp_dout(dpp, 0) << __func__ << " mgr_command " << cmd << " failed" << dendl;
     return -1;
   }
+  cout << "result: " << result.to_str() << ", len: " << result.length() << std::endl;
 
   string dump = result.to_str();
   JSONParser service_parser;
@@ -175,7 +178,7 @@ void* RGWDedupManager::entry()
     }
 
     int num_rgwdedup, cur_rgwdedup_id;
-    if (get_multi_rgwdedup_info(num_rgwdedup, cur_rgwdedup_id) < 0) {
+    if (get_multi_rgwdedup_info(num_rgwdedup, cur_rgwdedup_id, rados) < 0) {
       ldpp_dout(dpp, 2) << "current RGWDedup thread not found yet in Ceph Cluster."
         << " Retry a few seconds later." << dendl;
       sleep(RETRY_SLEEP_PERIOD);
@@ -257,8 +260,9 @@ void RGWDedupManager::finalize()
 
 int RGWDedupManager::append_ioctxs(rgw_pool base_pool)
 {
-  Rados* rados = store->getRados()->get_rados_handle();
-  ceph_assert(rados);
+  if (rados == nullptr) {
+    rados = store->getRados()->get_rados_handle();
+  }
 
   IoCtx base_ioctx;
   int ret = rgw_init_ioctx(dpp, rados, base_pool, base_ioctx, true, false);

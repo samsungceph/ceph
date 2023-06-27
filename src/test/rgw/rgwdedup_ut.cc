@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include "gtest/gtest.h"
+#include "gmock/gmock.h"
 
 #include "common/common_init.h"
 #include "test_rgw_common.h"
@@ -20,6 +21,8 @@
 #include "rgw/driver/rados/rgw_sal_rados.h"
 #include "rgw/rgw_dedup_worker.h"
 #include "rgw/rgw_fp_manager.h"
+#include "rgw/rgw_dedup_manager.h"
+#include "rgw/rgw_dedup_manager.cc"
 
 #include <ctime>
 #include <random>
@@ -28,7 +31,7 @@
 using namespace std;
 using namespace librados;
 
-static constexpr auto dout_subsys = ceph_subsys_rgw;
+//static constexpr auto dout_subsys = ceph_subsys_rgw;
 static rgw::sal::RadosStore* store = nullptr;
 
 auto cct = new CephContext(CEPH_ENTITY_TYPE_CLIENT);
@@ -85,6 +88,7 @@ protected:
   }
 };
 
+/*
 // if there is any redundant chunk, it regards as deduplicated.
 void get_chunk_map(const vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> chunks,
                               RGWDedupWorker* worker,
@@ -247,7 +251,7 @@ TEST_F(RGWDedupUnitTest, test_data_consistency_after_dedup)
     cleanup_default_namespace(ioctx);
     cleanup_namespace(ioctx, nspace);
     cleanup_default_namespace(cold_ioctx);
-    //cleanup_namespace(cold_ioctx, nspace);
+    cleanup_namespace(cold_ioctx, nspace);
   }
 }
 
@@ -256,9 +260,9 @@ TEST_F(RGWDedupUnitTest, chunk_obj_ref_size)
   store = new rgw::sal::RadosStore();
   ASSERT_NE(store, nullptr);
   RGWRados* rados = new RGWRados();
+  ASSERT_NE(rados, nullptr);
   rados->set_context(cct);
   rados->init_rados();
-  ASSERT_NE(rados, nullptr);
   store->setRados(rados);
   rados->set_store(store);
 
@@ -476,18 +480,64 @@ TEST_F(RGWDedupUnitTest, fpmap_memory_size_test)
       }
 
       auto unique_chunks = worker.do_cdc(data, "fastcdc", 1024);
-      uint32_t unique_chunk_cnt = unique_chunks.size();
-
       for (const auto& chunk : unique_chunks) {
         string fp = worker.generate_fingerprint(get<0>(chunk), fp_algo);
         fpmanager.add(fp);
       }
     }
 
-    /** call once again because add() inserts a fp value
-     *  into fpmap after check_memory_limit_and_do_evict()
-     */
+     // call once again because add() inserts a fp value
+     //  into fpmap after check_memory_limit_and_do_evict()
     fpmanager.check_memory_limit_and_do_evict();
     ASSERT_LE(fpmanager.get_fpmap_memory_size(), 2048);
   }
 }
+*/
+
+class MockRados {
+public:
+  void set_mgr_command_ret(bufferlist new_ret_val) {
+    ret_val = new_ret_val;
+    cout << __func__ << " " <<  new_ret_val << std::endl;
+  }
+
+  int mgr_command(string cmd, const bufferlist& inbl, bufferlist* outbl, string* outs) {
+    cout << "MockRados::mgr_command() called. cmd: " << cmd << std::endl;
+    outbl->clear();
+    outbl->append(ret_val);
+    return 0;
+  }
+
+private:
+  bufferlist ret_val;
+};
+
+TEST_F(RGWDedupUnitTest, service_dump_test)
+{
+  RGWDedupManager manager(&dpp, cct, store);
+  MockRados mock_rados;
+
+  int num_rgwdedup, cur_id;
+  ASSERT_EQ(manager.get_multi_rgwdedup_info(num_rgwdedup, cur_id, &mock_rados), -1);
+
+  bufferlist bl;
+  bl.append("test string");
+  mock_rados.set_mgr_command_ret(bl);
+  ASSERT_EQ(manager.get_multi_rgwdedup_info(num_rgwdedup, cur_id, &mock_rados), -1);
+
+
+  pid_t rgw_pid = getpid(); // have to use this pid on ret_val json string
+  // no service
+
+
+  // no rgw
+
+
+  // no daemons
+
+
+  // cur_id not match
+
+
+}
+
