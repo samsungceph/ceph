@@ -100,10 +100,8 @@ int RGWDedupManager::get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id, Ra
   string cmd = create_cmd("service dump", options);
 
   if (rados->mgr_command(cmd, bufferlist(), &result, nullptr) < 0) {
-    ldpp_dout(dpp, 0) << __func__ << " mgr_command " << cmd << " failed" << dendl;
     return -1;
   }
-  cout << "result: " << result.to_str() << ", len: " << result.length() << std::endl;
 
   string dump = result.to_str();
   JSONParser service_parser;
@@ -140,12 +138,13 @@ int RGWDedupManager::get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id, Ra
     }
     if (rgw_pid == (int)v["metadata"]["pid"]) {
       cur_id = idx;
+      break;
     }
     ++idx;
   }
 
   // current RGWDedup not found in Ceph cluster
-  if (cur_id == num_rgwdedups) {
+  if (idx == num_rgwdedups) {
     return -1;
   }
   return 0;
@@ -177,7 +176,8 @@ void* RGWDedupManager::entry()
       }
     }
 
-    int num_rgwdedup, cur_rgwdedup_id;
+    int num_rgwdedup = -1;
+    int cur_rgwdedup_id = -1;
     if (get_multi_rgwdedup_info(num_rgwdedup, cur_rgwdedup_id, rados) < 0) {
       ldpp_dout(dpp, 2) << "current RGWDedup thread not found yet in Ceph Cluster."
         << " Retry a few seconds later." << dendl;

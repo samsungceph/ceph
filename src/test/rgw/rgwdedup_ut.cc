@@ -496,48 +496,230 @@ TEST_F(RGWDedupUnitTest, fpmap_memory_size_test)
 
 class MockRados {
 public:
-  void set_mgr_command_ret(bufferlist new_ret_val) {
-    ret_val = new_ret_val;
-    cout << __func__ << " " <<  new_ret_val << std::endl;
+  void set_mgr_command_ret(string json_service_dump) {
+    service_dump.clear();
+    service_dump.append(json_service_dump);
   }
 
   int mgr_command(string cmd, const bufferlist& inbl, bufferlist* outbl, string* outs) {
-    cout << "MockRados::mgr_command() called. cmd: " << cmd << std::endl;
     outbl->clear();
-    outbl->append(ret_val);
+    outbl->append(service_dump);
     return 0;
   }
 
 private:
-  bufferlist ret_val;
+  bufferlist service_dump;
 };
+
+string create_service_dump(int num_rgws, int& cur_rgw_idx, bool is_valid)
+{
+  string dump = R"(
+{
+  "epoch": 1,
+  "modified": "2023-06-28T01:27:02.781234+0000",
+  "services": {
+    "osd": {
+      "daemons": {
+        "0": {
+          "start_epoch": 0,
+          "start_stamp": "0.000000",
+          "gid": 0,
+          "addr": "(unrecognized address family 0)/0",
+          "metadata": {},
+          "task_status": {}
+        },
+        "1": {
+          "start_epoch": 0,
+          "start_stamp": "0.000000",
+          "gid": 0,
+          "addr": "(unrecognized address family 0)/0",
+          "metadata": {},
+          "task_status": {}
+        },
+        "summary": ""
+      }
+    },
+    "rgw": {
+      "daemons": {
+        )";
+
+  // randomly generate an index of RGW
+  random_device rd;
+  mt19937 gen(rd());
+  uniform_int_distribution<int> dis(0, num_rgws - 1);
+  cur_rgw_idx = dis(gen);
+
+  for (int i = 0; i < num_rgws; ++i) {
+    dump += "\"" + to_string(i);
+    string rgw_instance = R"(": {
+        "start_epoch": 1,
+        "start_stamp": "2023-06-28T02:10:28.913702+0000",
+        "gid": 4201,
+        "addr": "X.X.X.X:Y/Z",
+        "metadata": {
+          "arch": "x86_64",
+          "ceph_release": "reef",
+          "ceph_version": "ceph version 10.2.0-85555-g96d92456cbd (96d92456cbd400df6d59ebf3b3a7c79ef9acb486) reef",
+          "ceph_version_short": "10.2.0-85555-g96d92456cbd",
+          "cpu": "Intel(R) Xeon(R) Gold 6342 CPU @ 2.80GHz",
+          "distro": "ubuntu",
+          "distro_description": "Ubuntu 22.04.1 LTS",
+          "distro_version": "22.04",
+          "frontend_config#0": "beast port=8000",
+          "frontend_type#0": "beast",
+          "hostname": "XXXX",
+          "id": "8000",
+          "kernel_description": "#80-Ubuntu SMP Mon May 15 15:18:26 UTC 2023",
+          "kernel_version": "5.15.0-73-generic",
+          "mem_swap_kb": "8388604",
+          "mem_total_kb": "527791192",
+          "num_handles": "1",
+          "os": "Linux",
+          "pid": ")";
+
+    if (is_valid && cur_rgw_idx == i) {
+      rgw_instance += to_string(getpid()) + "\",";
+    } else {
+      rgw_instance += to_string(-1) + "\",";
+    }
+
+    rgw_instance += R"(
+            "realm_id": "",
+            "realm_name": "",
+            "zone_id": "f525ddcb-a19b-4bf5-a3df-36164db44ecf",
+            "zone_name": "default",
+            "zonegroup_id": "83d5a044-c81a-4061-a322-57dcec6d7e1b",
+            "zonegroup_name": "default"
+          },
+          "task_status": {}
+        },
+    )";
+
+    dump += rgw_instance;
+  }
+  dump += R"(
+      }
+    }
+  }
+}
+  )";
+
+  return dump;
+}
 
 TEST_F(RGWDedupUnitTest, service_dump_test)
 {
   RGWDedupManager manager(&dpp, cct, store);
   MockRados mock_rados;
 
-  int num_rgwdedup, cur_id;
+  int num_rgwdedup = -1;
+  int cur_id = -1;
+  string service_dump= "";
+  mock_rados.set_mgr_command_ret(service_dump);
   ASSERT_EQ(manager.get_multi_rgwdedup_info(num_rgwdedup, cur_id, &mock_rados), -1);
 
-  bufferlist bl;
-  bl.append("test string");
-  mock_rados.set_mgr_command_ret(bl);
+  // no service in service_dump
+  num_rgwdedup = -1;
+  cur_id = -1;
+  service_dump = R"({"epoch":1,"modified":"2023-06-28T01:27:02.781234+0000"})";
+  mock_rados.set_mgr_command_ret(service_dump);
   ASSERT_EQ(manager.get_multi_rgwdedup_info(num_rgwdedup, cur_id, &mock_rados), -1);
-
-
-  pid_t rgw_pid = getpid(); // have to use this pid on ret_val json string
-  // no service
-
 
   // no rgw
-
+  num_rgwdedup = -1;
+  cur_id = -1;
+  service_dump = R"(
+{
+  "epoch": 1,
+  "modified": "2023-06-28T01:27:02.781234+0000",
+  "services": {
+    "osd": {
+      "daemons": {
+        "0": {
+          "start_epoch": 0,
+          "start_stamp": "0.000000",
+          "gid": 0,
+          "addr": "(unrecognized address family 0)/0",
+          "metadata": {},
+          "task_status": {}
+        },
+        "1": {
+          "start_epoch": 0,
+          "start_stamp": "0.000000",
+          "gid": 0,
+          "addr": "(unrecognized address family 0)/0",
+          "metadata": {},
+          "task_status": {}
+        },
+        "summary": ""
+      }
+    }
+  }
+}
+  )";
+  mock_rados.set_mgr_command_ret(service_dump);
+  ASSERT_EQ(manager.get_multi_rgwdedup_info(num_rgwdedup, cur_id, &mock_rados), -1);
 
   // no daemons
+  num_rgwdedup = -1;
+  cur_id = -1;
+  service_dump = R"(
+{
+  "epoch": 1,
+  "modified": "2023-06-28T02:10:47.289105+0000",
+  "services": {
+    "osd": {
+      "daemons": {
+        "0": {
+          "start_epoch": 0,
+          "start_stamp": "0.000000",
+          "gid": 0,
+          "addr": "(unrecognized address family 0)/0",
+          "metadata": {},
+          "task_status": {}
+        },
+        "1": {
+          "start_epoch": 0,
+          "start_stamp": "0.000000",
+          "gid": 0,
+          "addr": "(unrecognized address family 0)/0",
+          "metadata": {},
+          "task_status": {}
+        },
+        "summary": ""
+      }
+    },
+    "rgw": {
+    }
+  }
+}
+  )";
+  mock_rados.set_mgr_command_ret(service_dump);
+  ASSERT_EQ(manager.get_multi_rgwdedup_info(num_rgwdedup, cur_id, &mock_rados), -1);
 
+  // test invalid service dump which doesn't include current RGW's pid which containing RGWDedup
+  // This presumes that current RGW info has not been recognized by MGR yet.
+  // In case of this situation RGWDedupManager make fail.
+  int cur_rgw_idx;
+  for (int i = 1, num_rgwdedup = -1, cur_id = -1; i <= 10; ++i) {
+    // generate invalid service dump not including current RGW's pid
+    service_dump = create_service_dump(i, cur_rgw_idx, false);
+    mock_rados.set_mgr_command_ret(service_dump);
+    ASSERT_EQ(manager.get_multi_rgwdedup_info(num_rgwdedup, cur_id, &mock_rados), -1);
+  }
 
-  // cur_id not match
-
-
+  // test valid service dump including from 1 to 10 RGWs
+  for (int i = 1, num_rgwdedup = -1, cur_id = -1; i <= 10; ++i) {
+    // generate current RGW's index randomly
+    service_dump = create_service_dump(i, cur_rgw_idx, true);
+    mock_rados.set_mgr_command_ret(service_dump);
+    ASSERT_EQ(manager.get_multi_rgwdedup_info(num_rgwdedup, cur_id, &mock_rados), 0);
+    ASSERT_EQ(num_rgwdedup, i);
+    ASSERT_EQ(cur_id, cur_rgw_idx);
+  }
 }
 
+TEST_F(RGWDedupUnitTest, object_distribution_test)
+{
+
+}
