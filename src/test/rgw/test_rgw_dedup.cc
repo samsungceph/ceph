@@ -620,3 +620,140 @@ TEST_F(RGWDedupTestWithTwoPools, thread_safe_fpmanager)
   }
 }
 
+
+string get_target_chunk_oid(const map<string, uint32_t>& chunk_ref_cnt_map)
+{
+  random_device rd;
+  mt19937 gen(rd());
+  uniform_int_distribution<int> dis(0, chunk_ref_cnt_map.size() - 1);
+  int target_idx = dis(gen);
+  string target_chunk_oid;
+
+  for (const auto& [fp, cnt] : chunk_ref_cnt_map) {
+    if (target_idx-- <= 0) {
+      target_chunk_oid = fp;
+      break;
+    }
+  }
+  return target_chunk_oid;
+}
+
+// RGWScrubWorker test
+TEST_F(RGWDedupTestWithTwoPools, scrub)
+{
+  store = new rgw::sal::RadosStore();
+  ASSERT_NE(store, nullptr);
+  RGWRados* rados = new RGWRados();
+  ASSERT_NE(rados, nullptr);
+  rados->set_context(cct);
+  rados->init_rados();
+  store->setRados(rados);
+  rados->set_store(store);
+
+  RGWChunkScrubWorker scrub_worker(&dpp, cct, store, 0, cold_ioctx);
+  scrub_worker.prepare(1, 0);
+  scrub_worker.append_base_ioctx(ioctx.get_id(), ioctx);
+  shared_ptr<RGWFPManager> fpmanager
+    = make_shared<RGWFPManager>(1, 8 * 1024, 50);
+  RGWDedupWorker dedup_worker(&dpp, cct, store, 0, fpmanager, "fastcdc", 8 * 1024, "sha1", 1, cold_ioctx);
+  dedup_worker.append_base_ioctx(ioctx.get_id(), ioctx);
+
+  // create object
+  bufferlist data;
+  clock_t curtime = clock();
+  generate_buffer(512 * 1024, &data, curtime);
+  write_object("metadata-obj", data, ioctx);
+
+  // dedup objects
+  try_dedup_for_all_objs(ioctx, dedup_worker);
+
+  // check the number of chunk objects' references
+  hobject_t metadata_obj;
+  map<string, uint32_t> chunk_ref_cnt_map;
+  ObjectCursor shard_start, shard_end;
+  cold_ioctx.object_list_slice(cold_ioctx.object_list_begin(),
+                               cold_ioctx.object_list_end(),
+                               0, 1, &shard_start, &shard_end);
+  ObjectCursor cursor = shard_start;
+  while (cursor < shard_end) {
+    vector<ObjectItem> objs;
+    ASSERT_GE(cold_ioctx.object_list(cursor, shard_end, 100, {}, &objs, &cursor), 0);
+    for (const auto& obj : objs) {
+      chunk_refs_t refs;
+      ASSERT_EQ(dedup_worker.get_chunk_refs(cold_ioctx, obj.oid, refs), 0);
+      chunk_refs_by_object_t* chunk_refs
+         = static_cast<chunk_refs_by_object_t*>(refs.r.get());
+      chunk_ref_cnt_map.emplace(obj.oid, chunk_refs->by_object.size());
+
+      if (metadata_obj.oid.name.empty()) {
+        metadata_obj = *(chunk_refs->by_object.begin());
+      }
+    }
+  }
+
+  // inject not available pool fault into chunk object
+  string pool_fault_injected_oid = get_target_chunk_oid(chunk_ref_cnt_map);
+  uint32_t pool_fault_injected_oid_ref_cnt = chunk_ref_cnt_map[pool_fault_injected_oid];
+  uint32_t hash;
+  ASSERT_GE(cold_ioctx.get_object_hash_position2(pool_fault_injected_oid, &hash), 0);
+  hobject_t invalid_pool_ref(sobject_t("invalid-pool-fault-obj", CEPH_NOSNAP),
+                             "", hash, cold_ioctx.get_id() + 1, "");
+  {
+    ObjectWriteOperation wop;
+    cls_cas_chunk_get_ref(wop, invalid_pool_ref);
+    ASSERT_GE(cold_ioctx.operate(pool_fault_injected_oid, &wop), 0);
+  }
+
+  // inject not available oid fault into chunk object
+  string oid_fault_injected_oid = get_target_chunk_oid(chunk_ref_cnt_map);
+  uint32_t oid_fault_injected_oid_ref_cnt = chunk_ref_cnt_map[oid_fault_injected_oid];
+  ASSERT_GE(cold_ioctx.get_object_hash_position2(oid_fault_injected_oid, &hash), 0);
+  hobject_t invalid_oid_ref(sobject_t("invalid-oid-fault-obj", CEPH_NOSNAP),
+                            "", hash, ioctx.get_id(), "");
+  {
+    ObjectWriteOperation wop;
+    cls_cas_chunk_get_ref(wop, invalid_oid_ref);
+    ASSERT_GE(cold_ioctx.operate(oid_fault_injected_oid, &wop), 0);
+  }
+
+  // inject count mismatch fault into chunk object
+  string dummy_ref_injected_oid = get_target_chunk_oid(chunk_ref_cnt_map);
+  uint32_t dummy_ref_injected_oid_ref_cnt = chunk_ref_cnt_map[dummy_ref_injected_oid];
+  ASSERT_GE(cold_ioctx.get_object_hash_position2(dummy_ref_injected_oid, &hash), 0);
+  hobject_t dummy_ref(sobject_t("metadata-obj", CEPH_NOSNAP),
+                      "", hash, ioctx.get_id(), "");
+  {
+    ObjectWriteOperation wop;
+    cls_cas_chunk_get_ref(wop, metadata_obj);
+    ASSERT_GE(cold_ioctx.operate(dummy_ref_injected_oid, &wop), 0);
+  }
+
+  // run chunk scrub
+  scrub_worker.entry();
+
+  // check reference count
+  {
+    chunk_refs_t refs;
+    ASSERT_EQ(dedup_worker.get_chunk_refs(cold_ioctx, pool_fault_injected_oid, refs), 0);
+    chunk_refs_by_object_t* chunk_refs
+      = static_cast<chunk_refs_by_object_t*>(refs.r.get());
+    ASSERT_EQ(pool_fault_injected_oid_ref_cnt, chunk_refs->by_object.size());
+  }
+
+  {
+    chunk_refs_t refs;
+    ASSERT_EQ(dedup_worker.get_chunk_refs(cold_ioctx, oid_fault_injected_oid, refs), 0);
+    chunk_refs_by_object_t* chunk_refs
+      = static_cast<chunk_refs_by_object_t*>(refs.r.get());
+    ASSERT_EQ(oid_fault_injected_oid_ref_cnt, chunk_refs->by_object.size());
+  }
+
+  {
+    chunk_refs_t refs;
+    ASSERT_EQ(dedup_worker.get_chunk_refs(cold_ioctx, dummy_ref_injected_oid, refs), 0);
+    chunk_refs_by_object_t* chunk_refs
+      = static_cast<chunk_refs_by_object_t*>(refs.r.get());
+    ASSERT_EQ(dummy_ref_injected_oid_ref_cnt, chunk_refs->by_object.size());
+  }
+}
+
