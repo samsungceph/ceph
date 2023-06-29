@@ -38,6 +38,11 @@ uint32_t RGWFPManager::get_fpmap_memory_size()
     (fp_map.begin()->first.length() + sizeof(fp_map.begin()->second));
 }
 
+size_t RGWFPManager::get_fpmap_size()
+{
+  return fp_map.size();
+}
+
 void RGWFPManager::check_memory_limit_and_do_evict()
 {
   ceph_assert(memory_limit > 0);

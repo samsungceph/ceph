@@ -23,6 +23,7 @@ public:
   void check_memory_limit_and_do_evict();
   void set_low_watermark(uint32_t new_low_watermark);
   uint32_t get_fpmap_memory_size();
+  size_t get_fpmap_size();
 
 private:
   std::shared_mutex fingerprint_lock;
