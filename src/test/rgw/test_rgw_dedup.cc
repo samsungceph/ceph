@@ -5,6 +5,7 @@
 #include "test/librados/test_cxx.h"
 #include "test/librados/testcase_cxx.h"
 #include "test_rgw_common.h"
+#include "cls/cas/cls_cas_client.h"
 
 #include "rgw/rgw_fp_manager.h"
 #include "rgw/rgw_dedup_manager.h"
@@ -420,6 +421,96 @@ TEST_F(RGWDedupTestWithTwoPools, multi_base_pool)
     cleanup_default_namespace(ioctxs[i]);
     ioctxs[i].close();
     ASSERT_EQ(s_cluster.pool_delete(pool_name.c_str()), 0);
+  }
+}
+
+
+// RGWFPManager test
+TEST_F(RGWDedupTestWithTwoPools, fpmap_memory_size)
+{
+  // limit fpmanager memory size upto 4096 bytes
+  uint32_t memory_limit = 4096;
+  RGWFPManager fpmanager(2, memory_limit, 50);
+  RGWDedupWorker worker(&dpp, cct, store, 0, nullptr, "fastcdc", 1024, "sha1", 2, cold_ioctx);
+
+  vector<string> fp_algos = {"sha1", "sha256", "sha512"};
+  for (const auto& fp_algo : fp_algos) {
+    fpmanager.reset_fpmap();
+    bufferlist data;
+    generate_buffer(8 * 1024, &data, clock());
+
+    auto dup_chunks = worker.do_cdc(data, "fastcdc", 1024);
+    uint32_t dup_chunk_cnt = dup_chunks.size();
+
+    // make current chunks' fp duplicated
+    for (int i = 0; i < 2; ++i) {
+      for (const auto& chunk : dup_chunks) {
+        string fp = worker.generate_fingerprint(get<0>(chunk), fp_algo);
+        fpmanager.add(fp);
+      }
+    }
+    ASSERT_EQ(fpmanager.get_fpmap_size(), dup_chunk_cnt);
+
+    // add unique objects' chunks
+    for (int i = 1; i <= 5; ++i) {
+      data.clear();
+      generate_buffer(16 * 1024, &data, clock());
+
+      auto unique_chunks = worker.do_cdc(data, "fastcdc", 1024);
+      for (const auto& chunk : unique_chunks) {
+        string fp = worker.generate_fingerprint(get<0>(chunk), fp_algo);
+        fpmanager.add(fp);
+      }
+    }
+
+     // call once again because add() inserts a fp value
+     //  into fpmap after check_memory_limit_and_do_evict()
+    fpmanager.check_memory_limit_and_do_evict();
+    ASSERT_LE(fpmanager.get_fpmap_memory_size(), memory_limit);
+  }
+}
+
+TEST_F(RGWDedupTestWithTwoPools, thread_safe_fpmanager)
+{
+  RGWFPManager fpmanager(2, 10 * 1024 * 1024, 50);
+  RGWDedupWorker worker(&dpp, cct, store, 0, nullptr, "fastcdc", 1024, "sha1", 2, cold_ioctx);
+
+  // create redundant metadata object
+  bufferlist data, tmp;
+  generate_buffer(16 * 1024, &tmp, clock());
+  for (int i = 0; i < 4; ++i) {
+    data.append(tmp);
+  }
+
+  // get chunks by do_cdc()
+  auto chunks = worker.do_cdc(data, "fastcdc", 1024);
+
+  // run 10 threads which adds same chunk info simultaneously
+  int num_workers = 10;
+  vector<thread> threads;
+  for (int i = 0; i < num_workers; ++i) {
+    threads.emplace_back(thread( [] 
+      (int id, RGWDedupWorker* worker,
+       RGWFPManager* fpmanager,
+       vector<tuple<bufferlist, pair<uint64_t, uint64_t>>> chunks) {
+      for (const auto& chunk : chunks) {
+        string fp = worker->generate_fingerprint(get<0>(chunk), "sha1");
+        fpmanager->add(fp);
+      }
+    }, i, &worker, &fpmanager, chunks));
+  }
+
+  // join
+  for (auto& t : threads) {
+    t.join();
+  }
+
+  // when all threads are done, check chunk ref count
+  unordered_map<string, uint32_t> chunk_map;
+  get_chunk_map(chunks, &worker, "sha1", chunk_map);
+  for (auto& [fp, cnt] : chunk_map) {
+    size_t fp_cnt = fpmanager.find(fp);
+    ASSERT_EQ(fp_cnt, cnt * num_workers);
   }
 }
 
