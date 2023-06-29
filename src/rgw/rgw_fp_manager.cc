@@ -18,7 +18,7 @@ void RGWFPManager::set_low_watermark(uint32_t new_low_watermark)
   low_watermark = new_low_watermark;
 }
 
-size_t RGWFPManager::find(string& fingerprint)
+size_t RGWFPManager::find(const string& fingerprint)
 {
   shared_lock lock(fingerprint_lock);
   auto found_item = fp_map.find(fingerprint);
@@ -74,3 +74,4 @@ void RGWFPManager::add(string& fingerprint)
     ++found_iter->second;
   }
 }
+
