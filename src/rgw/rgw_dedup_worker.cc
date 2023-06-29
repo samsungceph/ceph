@@ -423,6 +423,12 @@ void RGWDedupWorker::finalize()
   fpmanager.reset();
 }
 
+void RGWDedupWorker::set_max_chunk_ref_size(const uint32_t new_max_size)
+{
+  max_chunk_ref_size = new_max_size;
+}
+
+
 int RGWChunkScrubWorker::do_chunk_repair(IoCtx& cold_ioctx, const string chunk_obj_name,
                                          const hobject_t src_obj, int chunk_ref_cnt,
                                          int source_ref_cnt)

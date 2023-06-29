@@ -316,3 +316,13 @@ target_link_libraries(radosgw-cr-test ${rgw_libs} librados
   ${CURL_LIBRARIES} ${EXPAT_LIBRARIES} ${BLKID_LIBRARIES}
   GTest::GTest)
 
+# unittest_rgw_dedup
+add_executable(ceph_test_rgw_dedup test_rgw_dedup.cc)
+target_link_libraries(ceph_test_rgw_dedup
+  ${rgw_libs}
+  librados
+  radostest-cxx
+  global
+  test_rgw_a
+  ${UNITTEST_LIBS}
+)
