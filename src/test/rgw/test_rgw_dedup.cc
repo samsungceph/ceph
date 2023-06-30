@@ -12,6 +12,8 @@
 #include "rgw/rgw_dedup_worker.h"
 #include "rgw/driver/rados/rgw_sal_rados.h"
 
+#include "mock_rgw_dedup_worker.h"
+
 #define dout_subsys ceph_subsys_rgw
 
 auto cct = new CephContext(CEPH_ENTITY_TYPE_CLIENT);
@@ -649,5 +651,25 @@ TEST_F(RGWDedupTestWithTwoPools, scrub)
       = static_cast<chunk_refs_by_object_t*>(refs.r.get());
     ASSERT_EQ(dummy_ref_injected_oid_ref_cnt, chunk_refs->by_object.size());
   }
+}
+
+// RGWDedupManager test
+TEST_F(RGWDedupTestWithTwoPools, dedup_scrub_ratio)
+{
+  RGWDedupManager manager(&dpp, cct, store);
+  manager.append_dedup_worker(make_unique<MockDedupWorker>(0));
+  manager.append_scrub_worker(make_unique<MockScrubWorker>(0));
+
+  uint32_t dedup_worked_cnt = 0;
+  for (uint32_t i = 0; i < DEFAULT_DEDUP_SCRUB_RATIO * 10; ++i) {
+    if (dedup_worked_cnt < DEFAULT_DEDUP_SCRUB_RATIO) {
+      manager.run_dedup(dedup_worked_cnt);
+      ASSERT_LE(dedup_worked_cnt, DEFAULT_DEDUP_SCRUB_RATIO);
+    } else {
+      manager.run_scrub(dedup_worked_cnt);
+      ASSERT_EQ(dedup_worked_cnt, 0);
+    }
+  }
+  sleep(1);
 }
 
