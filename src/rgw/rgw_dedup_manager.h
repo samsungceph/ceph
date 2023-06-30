@@ -39,8 +39,7 @@ class RGWDedupManager : public Thread
   uint32_t chunk_size;
   uint32_t dedup_threshold;
   uint32_t dedup_scrub_ratio;
-  bool obj_scan_fwd;    // true: scan forward, false: scan reverse
-  uint64_t fpmanager_memory_limit;
+  uint32_t fpmanager_memory_limit;
   uint32_t fpmanager_low_watermark;
   
 public:
@@ -48,8 +47,8 @@ public:
                   CephContext* _cct,
                   rgw::sal::RadosStore* _store)
     : dpp(_dpp), cct(_cct), store(_store), down_flag(true),
-      cold_pool_name(DEFAULT_COLD_POOL_NAME),
-      obj_scan_fwd(true) {}
+      rados(nullptr),
+      cold_pool_name(DEFAULT_COLD_POOL_NAME) {}
   RGWDedupManager(const RGWDedupManager& rhs) = delete;
   virtual ~RGWDedupManager() override {}
   virtual void* entry() override;
@@ -72,7 +71,15 @@ public:
                     const vector<pair<string, string>>& options);
   string create_osd_pool_set_cmd(const string prefix, const string base_pool,
                                  const string var, const string val);
-  int get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id);
+  template <class RadosClass>
+  int get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id, RadosClass* rados);
+
+  void set_dedup_scrub_ratio(uint32_t new_ratio);
+  uint32_t get_num_workers();
+  void set_num_workers(uint32_t new_num_workers);
+  void append_dedup_worker(unique_ptr<RGWDedupWorker>& new_worker);
+  void append_scrub_worker(unique_ptr<RGWChunkScrubWorker>& new_worker);
+  void set_fp_manager(shared_ptr<RGWFPManager>& new_fpmanager);
 };
 
 #endif

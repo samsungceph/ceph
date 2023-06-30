@@ -136,14 +136,16 @@ void RGWDedupManager::run_scrub(uint32_t& dedup_worked_cnt)
   dedup_worked_cnt = 0;
 }
 
-int RGWDedupManager::get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id)
+template <class RadosClass>
+int RGWDedupManager::get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id, RadosClass* rados)
 {
+  ceph_assert(rados);
+
   bufferlist result;
   vector<pair<string, string>> options;
   options.emplace_back(make_pair("format", "json"));
   string cmd = create_cmd("service dump", options);
 
-  Rados* rados = store->getRados()->get_rados_handle();
   if (rados->mgr_command(cmd, bufferlist(), &result, nullptr) < 0) {
     ldpp_dout(dpp, 0) << __func__ << " mgr_command " << cmd << " failed" << dendl;
     return -1;
@@ -183,14 +185,15 @@ int RGWDedupManager::get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id)
       continue;
     }
 
-    if (rgw_gid == std::stoull(k)) {
+    if (rgw_gid == std::stoull(v["gid"].val())) {
       cur_id = idx;
+      break;
     }
     ++idx;
   }
 
   // current RGWDedup not found in Ceph cluster
-  if (cur_id == num_rgwdedups) {
+  if (idx == num_rgwdedups) {
     return -1;
   }
   return 0;
@@ -224,7 +227,7 @@ void* RGWDedupManager::entry()
     }
 
     int num_rgwdedup, cur_rgwdedup_id;
-    if (get_multi_rgwdedup_info(num_rgwdedup, cur_rgwdedup_id) < 0) {
+    if (get_multi_rgwdedup_info(num_rgwdedup, cur_rgwdedup_id, rados) < 0) {
       ldpp_dout(dpp, 2) << "current RGWDedup thread not found yet in Ceph Cluster."
         << " Retry a few seconds later." << dendl;
       sleep(RETRY_SLEEP_PERIOD);
@@ -242,7 +245,6 @@ void* RGWDedupManager::entry()
       prepare_worker(num_rgwdedup, cur_rgwdedup_id, dedup_worked_cnt);
       run_dedup(dedup_worked_cnt);
     } else {
-      // scrub period
       if (perfcounter) {
         perfcounter->set(l_rgw_dedup_current_worker_mode, 2);
       }
@@ -279,7 +281,6 @@ int RGWDedupManager::append_ioctxs(rgw_pool base_pool)
 {
   if (rados == nullptr) {
     rados = store->getRados()->get_rados_handle();
-    ceph_assert(rados);
   }
 
   IoCtx base_ioctx;
@@ -317,5 +318,40 @@ void RGWDedupManager::set_down_flag(bool new_flag)
 bool RGWDedupManager::get_down_flag()
 {
   return down_flag;
+}
+
+uint32_t RGWDedupManager::get_num_workers()
+{
+  return num_workers;
+}
+
+void RGWDedupManager::set_num_workers(uint32_t new_num_workers)
+{
+  ceph_assert(new_num_workers > 0);
+  num_workers = new_num_workers;
+}
+
+void RGWDedupManager::append_dedup_worker(unique_ptr<RGWDedupWorker>& new_worker)
+{
+  ceph_assert(new_worker.get());
+  dedup_workers.emplace_back(move(new_worker));
+}
+
+void RGWDedupManager::append_scrub_worker(unique_ptr<RGWChunkScrubWorker>& new_worker)
+{
+  ceph_assert(new_worker.get());
+  scrub_workers.emplace_back(move(new_worker));
+}
+
+void RGWDedupManager::set_dedup_scrub_ratio(uint32_t new_ratio)
+{
+  ceph_assert(new_ratio > 0);
+  dedup_scrub_ratio = new_ratio;
+}
+
+void RGWDedupManager::set_fp_manager(shared_ptr<RGWFPManager>& new_fpmanager)
+{
+  ceph_assert(new_fpmanager.get());
+  fpmanager = new_fpmanager;
 }
 
