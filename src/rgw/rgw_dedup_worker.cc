@@ -125,7 +125,8 @@ void RGWDedupWorker::try_object_dedup(IoCtx& base_ioctx, Iter begin, Iter end)
 
     // New -> Cold
     if (is_cold < 0 && redundant_chunks.size() <= 0) {
-      int ret = write_object_data(cold_ioctx, target_oid, data);
+      string cold_obj_name = to_string(base_ioctx.get_id()) + ":" + target_oid;
+      int ret = write_object_data(cold_ioctx, cold_obj_name, data);
       if (ret < 0) {
         continue;
       }
@@ -133,13 +134,13 @@ void RGWDedupWorker::try_object_dedup(IoCtx& base_ioctx, Iter begin, Iter end)
       chunk_t cold_object = {
         .start = 0,
         .size = data.length(),
-        .fingerprint = target_oid,
+        .fingerprint = cold_obj_name,
         .data = data
       };
 
-      ret = try_set_chunk(base_ioctx, cold_ioctx, target_oid, cold_object);
+      ret = try_set_chunk(base_ioctx, cold_ioctx, cold_obj_name, cold_object);
       if (ret < 0) { // Overlapped(Already Cold or Deduped)
-        ret = remove_object(cold_ioctx, target_oid);
+        ret = remove_object(cold_ioctx, cold_obj_name);
       }
       else {
         if (perfcounter) {
