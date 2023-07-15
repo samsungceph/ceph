@@ -127,15 +127,16 @@ int RGWDedupManager::get_multi_rgwdedup_info(int& num_rgwdedups, int& cur_id)
     return -1;
   }
 
-  pid_t rgw_pid = getpid();
+  uint64_t rgw_gid = rados->get_instance_id();
   num_rgwdedups = f["services"]["rgw"]["daemons"].object().size();
   int idx = 0;
   for (const auto& [k, v] : f["services"]["rgw"]["daemons"].object()) {
-    if (!v.exists("metadata") || !v["metadata"].exists("pid") ) {
+    if (!v.exists("metadata") || !v["metadata"].exists("pid")) {
       --num_rgwdedups;
       continue;
     }
-    if (rgw_pid == (int)v["metadata"]["pid"]) {
+
+    if (rgw_gid == std::stoi(k)) {
       cur_id = idx;
     }
     ++idx;
