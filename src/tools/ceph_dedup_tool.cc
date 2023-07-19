@@ -41,6 +41,7 @@
 #include <locale>
 #include <memory>
 #include <math.h>
+#include <filesystem>
 
 #include "tools/RadosDump.h"
 #include "cls/cas/cls_cas_client.h"
@@ -68,8 +69,8 @@ struct EstimateResult {
   uint64_t total_bytes = 0;
   std::atomic<uint64_t> total_objects = {0};
 
-  EstimateResult(std::string alg, int chunk_size)
-    : cdc(CDC::create(alg, chunk_size)),
+  EstimateResult(std::string alg, int chunk_size, int window_bits)
+    : cdc(CDC::create(alg, chunk_size, window_bits)),
       chunk_size(1ull << chunk_size) {}
 
   void add_chunk(bufferlist& chunk, const std::string& fp_algo) {
@@ -110,7 +111,7 @@ struct EstimateResult {
     for (auto& j : chunk_statistics) {
       dedup_bytes += j.second.second;
     }
-    //f->dump_unsigned("dedup_bytes", dedup_bytes);
+    f->dump_unsigned("dedup_bytes", dedup_bytes);
     //f->dump_unsigned("original_bytes", total_bytes);
     f->dump_float("dedup_bytes_ratio",
 		  (double)dedup_bytes / (double)total_bytes);
@@ -187,6 +188,10 @@ po::options_description make_usage() {
     ("daemon", ": execute sample dedup in daemon mode")
     ("loop", ": execute sample dedup in a loop until terminated. Sleeps 'wakeup-period' seconds between iterations")
     ("wakeup-period", po::value<int>(), ": set the wakeup period of crawler thread (sec)")
+    ("num-dedup-tool", po::value<int>(), ": set the number of ceph-dedup-tool processes when estimates in parallel")
+    ("dedup-tool-id", po::value<int>(), ": set the id of current ceph-dedup-tool's process when estimates in parallel")
+    ("window-bits", po::value<int>(), ": set the window bits parameter of FastCDC")
+    ("output-dir", po::value<std::string>(), ": set a directory path where estimation output is stored")
   ;
   desc.add(op_desc);
   return desc;
@@ -254,19 +259,24 @@ class EstimateDedupRatio : public CrawlerThread
   string fp_algo;
   uint64_t chunk_size;
   uint64_t max_seconds;
+  uint32_t dedup_tool_id = 0;
+  uint32_t num_dedup_tool = 1;
 
 public:
   EstimateDedupRatio(
     IoCtx& io_ctx, int n, int m, ObjectCursor begin, ObjectCursor end,
     string chunk_algo, string fp_algo, uint64_t chunk_size, int32_t report_period,
     uint64_t num_objects, uint64_t max_read_size,
-    uint64_t max_seconds):
+    uint64_t max_seconds,
+    uint32_t dedup_tool_id, uint32_t num_dedup_tool):
     CrawlerThread(io_ctx, n, m, begin, end, report_period, num_objects,
 		  max_read_size),
     chunk_algo(chunk_algo),
     fp_algo(fp_algo),
     chunk_size(chunk_size),
-    max_seconds(max_seconds) {
+    max_seconds(max_seconds),
+    dedup_tool_id(dedup_tool_id),
+    num_dedup_tool(num_dedup_tool) {
   }
 
   void* entry() {
@@ -297,7 +307,7 @@ public:
 
 vector<std::unique_ptr<CrawlerThread>> estimate_threads;
 
-static void print_dedup_estimate(std::ostream& out, std::string chunk_algo)
+static void print_dedup_estimate(std::ostream& out, std::string chunk_algo, bool chunk_info_include)
 {
   /*
   uint64_t total_bytes = 0;
@@ -315,14 +325,26 @@ static void print_dedup_estimate(std::ostream& out, std::string chunk_algo)
   f->open_object_section("results");
   f->dump_string("chunk_algo", chunk_algo);
   f->open_array_section("chunk_sizes");
-  for (auto& i : dedup_estimates) {
-    f->dump_object("chunker", i.second);
+  if (chunk_info_include) {
+    for (auto& i : dedup_estimates) {
+      f->dump_object("chunker", i.second);
+    }
   }
+  
   f->close_section();
 
   f->open_object_section("summary");
   f->dump_unsigned("examined_objects", examined_objects);
   f->dump_unsigned("examined_bytes", examined_bytes);
+
+  uint32_t fp_map_size = 0;
+  for (const auto& i : dedup_estimates) {
+    fp_map_size += i.second.chunk_statistics.size() 
+      * (i.second.chunk_statistics.begin()->first.length() + 1
+      + sizeof(i.second.chunk_statistics.begin()->second));
+  }
+  f->dump_unsigned("fp_map_size", fp_map_size);
+
   /*
   f->dump_unsigned("total_objects", total_objects);
   f->dump_unsigned("total_bytes", total_bytes);
@@ -343,12 +365,24 @@ static void handle_signal(int signum)
 
 void EstimateDedupRatio::estimate_dedup_ratio()
 {
+  ObjectCursor proc_shard_start;
+  ObjectCursor proc_shard_end;
   ObjectCursor shard_start;
   ObjectCursor shard_end;
 
+  // slice for multi-dedup-tool process
   io_ctx.object_list_slice(
     begin,
     end,
+    dedup_tool_id,
+    num_dedup_tool,
+    &proc_shard_start,
+    &proc_shard_end);
+
+  // slice for EstimateDedupRatio thread
+  io_ctx.object_list_slice(
+    proc_shard_start,
+    proc_shard_end,
     n,
     m,
     &shard_start,
@@ -395,7 +429,7 @@ void EstimateDedupRatio::estimate_dedup_ratio()
 	cerr << (int)(now - start) << "s : read "
 	     << dedup_estimates.begin()->second.total_bytes << " bytes so far..."
 	     << std::endl;
-	print_dedup_estimate(cerr, chunk_algo);
+	print_dedup_estimate(cerr, chunk_algo, false);
 	next_report = now;
 	next_report += report_period;
       }
@@ -973,6 +1007,34 @@ int get_opts_report_period(const po::variables_map &opts) {
   }
 }
 
+void write_fp_info_file(string out_dir, uint32_t id)
+{
+  if (out_dir[out_dir.length() - 1] != '/') {
+    out_dir.append("/");
+  }
+
+  for (const auto& i : dedup_estimates) {
+    string file_name = "fp_info_" + to_string(i.first) + "_" + to_string(id) + ".csv";
+    ofstream outfile(out_dir + file_name);
+    string buf;
+    int count = 0;
+
+    for (const auto& [fp, fp_info] : i.second.chunk_statistics) {
+      if (count >= 500) {
+        // write to file
+        outfile << buf;
+        buf.clear();
+        count = 0;
+      }
+
+      // buffer append
+      buf.append(fp + "," + to_string(fp_info.second) + "\n");
+      ++count;
+    }
+    outfile.close();
+  }
+}
+
 int estimate_dedup_ratio(const po::variables_map &opts)
 {
   Rados rados;
@@ -980,13 +1042,17 @@ int estimate_dedup_ratio(const po::variables_map &opts)
   std::string chunk_algo = "fastcdc";
   string fp_algo = "sha1";
   string pool_name;
-  uint64_t chunk_size = 8192;
+  uint64_t chunk_size = 0;
   uint64_t min_chunk_size = 8192;
   uint64_t max_chunk_size = 4*1024*1024;
   unsigned max_thread = default_max_thread;
   uint32_t report_period = default_report_period;
   uint64_t max_read_size = default_op_size;
   uint64_t max_seconds = 0;
+  uint32_t num_dedup_tool = 1;
+  uint32_t dedup_tool_id = 0;
+  int window_bits = 0;
+  string output_dir = "";
   int ret;
   std::map<std::string, std::string>::const_iterator i;
   bool debug = false;
@@ -1014,12 +1080,12 @@ int estimate_dedup_ratio(const po::variables_map &opts)
     cout << "8192 is set as chunk size by default" << std::endl;
   }
   if (opts.count("min-chunk-size")) {
-    chunk_size = opts["min-chunk-size"].as<int>();
+    min_chunk_size = opts["min-chunk-size"].as<int>();
   } else {
     cout << "8192 is set as min chunk size by default" << std::endl;
   }
   if (opts.count("max-chunk-size")) {
-    chunk_size = opts["max-chunk-size"].as<int>();
+    max_chunk_size = opts["max-chunk-size"].as<int>();
   } else {
     cout << "4MB is set as max chunk size by default" << std::endl;
   }
@@ -1039,6 +1105,24 @@ int estimate_dedup_ratio(const po::variables_map &opts)
     debug = true;
   }
   boost::optional<pg_t> pgid(opts.count("pgid"), pg_t());
+  if (opts.count("num-dedup-tool")) {
+    num_dedup_tool = opts["num-dedup-tool"].as<int>();
+  }
+  if (opts.count("dedup-tool-id")) {
+    dedup_tool_id = opts["dedup-tool-id"].as<int>();
+  }
+  ceph_assert(num_dedup_tool > dedup_tool_id);
+  if (opts.count("window-bits")) {
+    window_bits = opts["window-bits"].as<int>();
+  }
+  ceph_assert(window_bits >= 0);
+  if (opts.count("output-dir")) {
+    output_dir= opts["output-dir"].as<string>();
+    std::filesystem::path p(output_dir);
+    if (!std::filesystem::exists(p)) {
+      cerr << "error output dir not exists" << std::endl;
+    }
+  }
 
   ret = rados.init_with_context(g_ceph_context);
   if (ret < 0) {
@@ -1067,12 +1151,12 @@ int estimate_dedup_ratio(const po::variables_map &opts)
   if (chunk_size) {
     dedup_estimates.emplace(std::piecewise_construct,
 			    std::forward_as_tuple(chunk_size),
-			    std::forward_as_tuple(chunk_algo, cbits(chunk_size)-1));
+			    std::forward_as_tuple(chunk_algo, cbits(chunk_size)-1, window_bits));
   } else {
     for (size_t cs = min_chunk_size; cs <= max_chunk_size; cs *= 2) {
       dedup_estimates.emplace(std::piecewise_construct,
 			      std::forward_as_tuple(cs),
-			      std::forward_as_tuple(chunk_algo, cbits(cs)-1));
+			      std::forward_as_tuple(chunk_algo, cbits(cs)-1, window_bits));
     }
   }
 
@@ -1098,7 +1182,7 @@ int estimate_dedup_ratio(const po::variables_map &opts)
       new EstimateDedupRatio(io_ctx, i, max_thread, begin, end,
 			     chunk_algo, fp_algo, chunk_size,
 			     report_period, s.num_objects, max_read_size,
-			     max_seconds));
+			     max_seconds, dedup_tool_id, num_dedup_tool));
     ptr->create("estimate_thread");
     ptr->set_debug(debug);
     estimate_threads.push_back(move(ptr));
@@ -1109,7 +1193,12 @@ int estimate_dedup_ratio(const po::variables_map &opts)
     p->join();
   }
 
-  print_dedup_estimate(cout, chunk_algo);
+  // writing fingrtprint information into file
+  if (!output_dir.empty()) {
+    write_fp_info_file(output_dir, dedup_tool_id);
+  }
+
+  print_dedup_estimate(cout, chunk_algo, true);
 
  out:
   return (ret < 0) ? 1 : 0;
