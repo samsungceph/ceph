@@ -39,11 +39,13 @@
 #include <climits>
 #include <locale>
 #include <memory>
+#include <filesystem>
 
 #include "tools/RadosDump.h"
 #include "cls/cas/cls_cas_client.h"
 #include "include/stringify.h"
 #include "global/signal_handler.h"
+#include "common/CDC.h"
 
 using namespace librados;
 unsigned default_op_size = 1 << 22;
@@ -62,6 +64,10 @@ void usage()
   cout << "   --chunk-pool <pool name> " << std::endl;
   cout << "   --max-thread <threads> " << std::endl;
   cout << "   --report-perioid <seconds> " << std::endl;
+  cout << "   --num-dedup-tool <total> " << std::endl;
+  cout << "   --dedup-tool-id <id> " << std::endl;
+  cout << "   --window-bits <bits> " << std::endl;
+  cout << "   --output-dir <dir> " << std::endl;
   exit(1);
 }
 
@@ -124,13 +130,16 @@ class EstimateDedupRatio : public EstimateThread
   string chunk_algo;
   string fp_algo;
   uint64_t chunk_size;
+  int32_t num_dedup_tool;
+  int32_t dedup_tool_id;
+  int32_t window_bits;
   map< string, pair <uint64_t, uint64_t> > local_chunk_statistics; // < key, <count, chunk_size> >
 
 public:
   EstimateDedupRatio(IoCtx& io_ctx, int n, int m, ObjectCursor begin, ObjectCursor end, 
-		string chunk_algo, string fp_algo, uint64_t chunk_size, int32_t timeout):
+		string chunk_algo, string fp_algo, uint64_t chunk_size, int32_t timeout, int32_t num_dedup_tool, int32_t dedup_tool_id, int32_t window_bits):
     EstimateThread(io_ctx, n, m, begin, end, timeout), chunk_algo(chunk_algo), fp_algo(fp_algo),
-    chunk_size(chunk_size) { }
+    chunk_size(chunk_size), num_dedup_tool(num_dedup_tool), dedup_tool_id(dedup_tool_id), window_bits(window_bits) { }
 
   void* entry() {
     count_objects(io_ctx, begin, end);
@@ -140,6 +149,8 @@ public:
   void estimate_dedup_ratio();
   void print_status(Formatter *f, ostream &out);
   map< string, pair <uint64_t, uint64_t> > &get_chunk_statistics() { return local_chunk_statistics; }
+  std::vector<std::tuple<bufferlist, pair<uint64_t, uint64_t>>> do_cdc(bufferlist &data); 
+  string generate_fingerprint(bufferlist chunk_data);
   uint64_t fixed_chunk(string oid, uint64_t offset);
 };
 
@@ -299,38 +310,68 @@ void EstimateDedupRatio::estimate_dedup_ratio()
     for (const auto & i : result) {
       const auto &oid = i.oid;
       uint64_t offset = 0;
-      while (true) {
-	Mutex::Locker l(m_lock);
-	if (m_stop) {
-	  Formatter *formatter = Formatter::create("json-pretty");
-	  print_status(formatter, cout);
-	  delete formatter;
-	  return;
-	}
 
-	uint64_t next_offset;
-	if (chunk_algo == "fixed") {
-	  next_offset = fixed_chunk(oid, offset);
-	} else {
-	  // CDC ..
-	  ceph_assert(0 == "no support chunk algorithm"); 
-	}
-	
-	if (!next_offset) {
-	  break;
-	}
-	offset += next_offset;
-	m_cond.WaitInterval(m_lock,utime_t(0, COND_WAIT_INTERVAL));
-	if (cur_time + utime_t(timeout, 0) < ceph_clock_now()) {
-	  Formatter *formatter = Formatter::create("json-pretty");
-	  print_status(formatter, cout);
-	  delete formatter;
-	  cur_time = ceph_clock_now();
-	}
+      bufferlist data;
+      r = io_ctx.read(oid, data, chunk_size, offset);
+      if (r < 0) {
+        cerr << "error read : " << cpp_strerror(r) << std::endl;
+        return;
       }
+
+      auto chunks = do_cdc(data);
+
+      for (auto &p : chunks) {
+        bufferlist chunk_data = std::get<0>(p);
+        string chunk_fingerprint = generate_fingerprint(chunk_data);
+
+        auto c = local_chunk_statistics.find(chunk_fingerprint);
+        if (c != local_chunk_statistics.end()) {
+          c->second.first++;
+        } else {
+          local_chunk_statistics.insert(make_pair(chunk_fingerprint, make_pair(1, chunk_data.length())));
+        }
+      }
+
+      total_bytes += data.length();
       examined_objects++;
     }
   }
+}
+
+std::vector<std::tuple<bufferlist, pair<uint64_t, uint64_t>>> EstimateDedupRatio::do_cdc(bufferlist &data)
+{
+  std::vector<std::tuple<bufferlist, pair<uint64_t, uint64_t>>> ret;
+
+  unique_ptr<CDC> cdc = CDC::create(chunk_algo, cbits(chunk_size) - 1);
+  vector<pair<uint64_t, uint64_t>> chunks;
+  cdc->calc_chunks(data, &chunks);
+  for (auto &p : chunks) {
+    bufferlist chunk;
+    chunk.substr_of(data, p.first, p.second);
+    ret.push_back(make_tuple(chunk, p));
+  }
+
+  return ret;
+}
+
+std::string EstimateDedupRatio::generate_fingerprint(bufferlist chunk_data)
+{
+  string ret;
+
+  sha1_digest_t sha1_val = chunk_data.sha1();
+  return sha1_val.to_str();
+  // if (fp_algo == "sha1") {
+  //   sha1_digest_t sha1_val = chunk_data.sha1();
+  //   return sha1_val.to_str();
+  // } else if (fp_algo == "sha256") {
+  //   sha256_digest_t sha256_val = chunk_data.sha256();
+  //   return sha256_val.to_str();
+  // } else if (fp_algo == "sha512") { 
+  //   sha512_digest_t sha512_val = chunk_data.sha512();
+  //   return sha512_val.to_str();
+  // } else {
+  //   ceph_assert(0 == "Invalid fp type");
+  // }
 }
 
 uint64_t EstimateDedupRatio::fixed_chunk(string oid, uint64_t offset)
@@ -474,6 +515,9 @@ int estimate_dedup_ratio(const std::map < std::string, std::string > &opts,
   uint64_t chunk_size = 0;
   unsigned max_thread = default_max_thread;
   uint32_t report_period = default_report_period;
+  uint32_t num_dedup_tool;
+  uint32_t dedup_tool_id;
+  uint32_t window_bits;
   int ret;
   std::map<std::string, std::string>::const_iterator i;
   bool debug = false;
@@ -497,7 +541,7 @@ int estimate_dedup_ratio(const std::map < std::string, std::string > &opts,
   i = opts.find("fingerprint-algorithm");
   if (i != opts.end()) {
     fp_algo = i->second.c_str();
-    if (fp_algo != "sha1") {
+    if (fp_algo != "sha1" && fp_algo != "sha256" && fp_algo != "sha512") {
       usage_exit();
     }
   } else {
@@ -526,6 +570,28 @@ int estimate_dedup_ratio(const std::map < std::string, std::string > &opts,
       return -EINVAL;
     }
   } 
+
+  i = opts.find("num-dedup-tool");
+  if (i != opts.end()) {
+    if (rados_sistrtoll(i, &num_dedup_tool)) {
+      return -EINVAL;
+    }
+  }
+
+  i = opts.find("dedup-tool-id");
+  if (i != opts.end()) {
+    if (rados_sistrtoll(i, &dedup_tool_id)) {
+      return -EINVAL;
+    }
+  }
+
+  i = opts.find("window-bits");
+  if (i != opts.end()) {
+    if (rados_sistrtoll(i, &window_bits)) {
+      return -EINVAL;
+    }
+  }
+
   i = opts.find("debug");
   if (i != opts.end()) {
     debug = true;
@@ -563,7 +629,7 @@ int estimate_dedup_ratio(const std::map < std::string, std::string > &opts,
   for (unsigned i = 0; i < max_thread; i++) {
     std::unique_ptr<EstimateThread> ptr (new EstimateDedupRatio(io_ctx, i, max_thread, begin, end,
 							    chunk_algo, fp_algo, chunk_size, 
-							    report_period));
+							    report_period, num_dedup_tool, dedup_tool_id, window_bits));
     ptr->create("estimate_thread");
     estimate_threads.push_back(move(ptr));
   }
@@ -804,6 +870,14 @@ int main(int argc, const char **argv)
       opts["max-thread"] = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--report-period", (char*)NULL)) {
       opts["report-period"] = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--num-dedup-tool", (char*)NULL)) {
+      opts["num-dedup-tool"] = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--dedup-tool-id", (char*)NULL)) {
+      opts["dedup-tool-id"] = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--window-bits", (char*)NULL)) {
+      opts["window-bits"] = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--output-dir", (char*)NULL)) {
+      opts["output-dir"] = val;
     } else if (ceph_argparse_flag(args, i, "--debug", (char*)NULL)) {
       opts["debug"] = "true";
     } else {
