@@ -532,6 +532,9 @@ set(libcommon_files
   common/hostname.cc
   common/util.cc
   common/PriorityCache.cc
+  common/CDC.cc
+  common/FastCDC.cc
+  common/FixedCDC.cc
   arch/probe.cc
   ${auth_files}
   ${mds_files})

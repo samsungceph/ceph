@@ -478,5 +478,43 @@ WRITE_CLASS_ENCODER(errorcode32_t)
 WRITE_EQ_OPERATORS_1(errorcode32_t, code)
 WRITE_CMP_OPERATORS_1(errorcode32_t, code)
 
+template <uint8_t S>
+struct sha_digest_t {
+  constexpr static uint32_t SIZE = S;
+  // TODO: we might consider std::array in the future. Avoiding it for now
+  // as sha_digest_t is a part of our public API.
+  unsigned char v[S] = {0};
+
+  std::string to_str() const {
+    char str[S * 2 + 1] = {0};
+    str[0] = '\0';
+    for (size_t i = 0; i < S; i++) {
+      ::sprintf(&str[i * 2], "%02x", static_cast<int>(v[i]));
+    }
+    return std::string(str);
+  }
+  sha_digest_t(const unsigned char *_v) { memcpy(v, _v, SIZE); };
+  sha_digest_t() {}
+
+  bool operator==(const sha_digest_t& r) const {
+    return ::memcmp(v, r.v, SIZE) == 0;
+  }
+  bool operator!=(const sha_digest_t& r) const {
+    return ::memcmp(v, r.v, SIZE) != 0;
+  }
+
+  void encode(ceph::buffer::list &bl) const {
+    // copy to avoid reinterpret_cast, is_pod and other nasty things
+    std::array<unsigned char, SIZE> tmparr;
+    memcpy(tmparr.data(), v, SIZE);
+    ::encode(tmparr, bl);
+  }
+  void decode(ceph::buffer::list::const_iterator &bl) {
+    std::array<unsigned char, SIZE> tmparr;
+    ::decode(tmparr, bl);
+    memcpy(v, tmparr.data(), SIZE);
+  }
+};
+
 
 #endif

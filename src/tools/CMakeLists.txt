@@ -91,6 +91,17 @@ add_executable(ceph-authtool ${ceph_authtool_srcs})
 target_link_libraries(ceph-authtool global ${EXTRALIBS} ${CRYPTO_LIBS})
 install(TARGETS ceph-authtool DESTINATION bin)
 
+if(WITH_TESTS)
+set(ceph_dedup_tool_srcs ceph_dedup_tool.cc)
+add_executable(ceph-dedup-tool ${ceph_dedup_tool_srcs})
+target_link_libraries(ceph-dedup-tool
+  librados
+  global
+  ${PROJECT_SOURCE_DIR}/src/common/CDC.cc
+  Boost::program_options)
+install(TARGETS ceph-dedup-tool DESTINATION bin)
+endif(WITH_TESTS)
+
 if(WITH_CEPHFS)
   add_subdirectory(cephfs)
 endif(WITH_CEPHFS)
