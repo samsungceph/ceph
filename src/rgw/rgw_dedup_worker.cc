@@ -441,6 +441,42 @@ void RGWDedupWorker::finalize()
   fpmanager.reset();
 }
 
+void RGWDedupWorker::set_chunk_size(uint32_t new_chunk_size)
+{
+  ceph_assert(new_chunk_size >= 4 && new_chunk_size <= 4194304);
+  chunk_size = new_chunk_size;
+}
+
+void RGWDedupWorker::set_chunk_algorithm(string new_chunk_algo)
+{
+  ceph_assert(new_chunk_algo == "fastcdc" || new_chunk_algo == "fixed");
+  chunk_algo = new_chunk_algo;
+}
+
+void RGWDedupWorker::set_fp_algorithm(string new_fp_algo)
+{
+  ceph_assert(new_fp_algo == "sha1" || new_fp_algo == "sha256" || new_fp_algo == "sha512");
+  fp_algo = new_fp_algo;
+}
+
+void RGWDedupWorker::set_dedup_threshold(uint32_t new_dedup_threshold)
+{
+  ceph_assert(new_dedup_threshold > 0);
+  dedup_threshold = new_dedup_threshold;
+}
+
+void RGWDedupWorker::set_max_chunk_ref_size(uint32_t new_max_chunk_ref_size)
+{
+  ceph_assert(new_max_chunk_ref_size > 0);
+  max_chunk_ref_size = new_max_chunk_ref_size;
+}
+
+uint32_t RGWDedupWorker::get_max_chunk_ref_size()
+{
+  return max_chunk_ref_size;
+}
+
+
 int RGWChunkScrubWorker::do_chunk_repair(IoCtx& cold_ioctx,
 					 const string chunk_obj_name,
 					 const hobject_t src_obj,

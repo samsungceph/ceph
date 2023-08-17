@@ -12,17 +12,21 @@ using namespace std;
 class RGWFPManager
 {
 public:
-  RGWFPManager(uint32_t _dedup_threshold, uint64_t _memory_limit, uint32_t _low_watermark)
-    : dedup_threshold(_dedup_threshold), memory_limit(_memory_limit), low_watermark(_low_watermark) {}
+  RGWFPManager(uint32_t _dedup_threshold, uint64_t _memory_limit,
+               uint32_t _low_watermark)
+    : dedup_threshold(_dedup_threshold),
+      memory_limit(_memory_limit),
+      low_watermark(_low_watermark) {}
   RGWFPManager(const RGWFPManager& rhs) = delete;
   virtual ~RGWFPManager() {}
 
   void reset_fpmap();
-  size_t find(string& fingerprint);
+  size_t find(const string& fingerprint);
   void add(string& fingerprint);
   void check_memory_limit_and_do_evict();
   void set_low_watermark(uint32_t new_low_watermark);
   uint32_t get_fpmap_memory_size();
+  size_t get_fpmap_size();
 
 private:
   std::shared_mutex fingerprint_lock;

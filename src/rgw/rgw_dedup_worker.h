@@ -134,6 +134,13 @@ public:
                                uint32_t chunk_size);
   string generate_fingerprint(bufferlist chunk_data, string fp_algo);
   string get_archived_obj_name(IoCtx& ioctx, const string obj_name);
+
+  void set_chunk_size(uint32_t new_chunk_size);
+  void set_chunk_algorithm(string new_chunk_algo);
+  void set_fp_algorithm(string new_fp_algo);
+  void set_dedup_threshold(uint32_t new_dedup_threshold);
+  void set_max_chunk_ref_size(uint32_t new_max_chunk_ref_size);
+  uint32_t get_max_chunk_ref_size();
 };
 
 class RGWChunkScrubWorker : public Worker
