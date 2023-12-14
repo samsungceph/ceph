@@ -153,6 +153,7 @@ short=0
 crimson=0
 ec=0
 cephadm=0
+cephadm_public_network=""
 parallel=true
 restart=1
 hitset=""
@@ -256,6 +257,7 @@ options:
 	--bluestore-io-uring: enable io_uring backend
 	--inc-osd: append some more osds into existing vcluster
 	--cephadm: enable cephadm orchestrator with ~/.ssh/id_rsa[.pub]
+	--cephadm-public-network: specify public network for cephadm
 	--no-parallel: dont start all OSDs in parallel
 	--no-restart: dont restart process when using ceph-run
 	--jaeger: use jaegertracing for tracing
@@ -398,6 +400,10 @@ case $1 in
         ;;
     --cephadm)
         cephadm=1
+        ;;
+    --cephadm-public-network)
+        cephadm_public_network="$2"
+        shift
         ;;
     --no-parallel)
         parallel=false
@@ -1623,8 +1629,16 @@ EOF
     fi
     if [ "$cephadm" -gt 0 ]; then
         debug echo Setting mon public_network ...
-        public_network=$(ip route list | grep -w "$IP" | grep -v default | awk '{print $1}')
-        ceph_adm config set mon public_network $public_network
+        if [ -n "$cephadm_public_network" ]; then
+            ceph_adm config set mon public_network $cephadm_public_network
+        else
+            public_network=$(ip route list | grep -w "$IP" | grep -v default | awk '{print $1}')
+            if [ $(echo "$public_network" | wc -l) -eq 1 ]; then
+                ceph_adm config set mon public_network $public_network
+            else
+                echo "public_network is not set. please set --cephadm-public-network manually."
+            fi
+        fi
     fi
 fi
 
